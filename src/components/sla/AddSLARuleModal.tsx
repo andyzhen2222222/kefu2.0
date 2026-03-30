@@ -1,0 +1,95 @@
+import { X, Clock, AlertTriangle } from 'lucide-react';
+
+interface AddSLARuleModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export default function AddSLARuleModal({ isOpen, onClose }: AddSLARuleModalProps) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h2 className="text-lg font-bold text-slate-900">新增 SLA 规则</h2>
+          <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-6 overflow-y-auto max-h-[70vh] space-y-6">
+          <div className="space-y-2">
+            <label className="text-sm font-bold text-slate-700">规则名称</label>
+            <input 
+              type="text" 
+              placeholder="例如：Amazon 标准回复时效"
+              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-bold text-slate-700">适用平台</label>
+            <select className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]">
+              <option value="all">所有平台</option>
+              <option value="amazon">Amazon</option>
+              <option value="ebay">eBay</option>
+              <option value="shopify">Shopify</option>
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-slate-400" />
+                目标回复时间 (小时)
+              </label>
+              <input 
+                type="number" 
+                defaultValue={24}
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-amber-500" />
+                预警时间 (剩余小时)
+              </label>
+              <input 
+                type="number" 
+                defaultValue={2}
+                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-bold text-slate-700">工作时间计算</label>
+            <div className="space-y-2">
+              <label className="flex items-center gap-3 p-3 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50">
+                <input type="radio" name="workhours" className="w-4 h-4 border-slate-300 text-[#F97316] focus:ring-[#F97316]" defaultChecked />
+                <span className="text-sm font-medium text-slate-700">7x24 小时 (自然时间)</span>
+              </label>
+              <label className="flex items-center gap-3 p-3 border border-slate-200 rounded-xl cursor-pointer hover:bg-slate-50">
+                <input type="radio" name="workhours" className="w-4 h-4 border-slate-300 text-[#F97316] focus:ring-[#F97316]" />
+                <span className="text-sm font-medium text-slate-700">仅工作日 (跳过周末)</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-3 px-6 py-4 bg-slate-50 border-t border-slate-100">
+          <button onClick={onClose} className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-200 rounded-xl transition-colors">
+            取消
+          </button>
+          <button 
+            onClick={onClose}
+            className="px-5 py-2.5 bg-[#F97316] text-white rounded-xl text-sm font-bold hover:bg-[#ea580c] transition-colors shadow-sm"
+          >
+            保存规则
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,120 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: id, name, email, role, avatar
+    //
+    // Collection: tickets
+    // Fields: id, channelId, customerId, orderId, status, priority, sentiment, aiClassification, subject, createdAt, updatedAt, slaDueAt, isImportant, isFavorite, tags
+    //
+    // Collection: tickets/{ticketId}/messages
+    // Fields: id, ticketId, senderId, senderType, content, createdAt
+    //
+    // Collection: customers
+    // Fields: id, name, email, shippingCountry, sentiment, segments, totalOrderValue, ordersCount, latestPurchaseAt, customerSince
+    //
+    // Collection: orders
+    // Fields: id, platformOrderId, customerId, channelId, skuList, productTitles, amount, currency, shippingStatus, trackingNumber, deliveryEta, paymentStatus
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "andyzhen222@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isAgent() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'agent', 'manager']);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['id', 'name', 'email', 'role', 'avatar']) &&
+             data.id is string && data.id.size() > 0 &&
+             data.name is string && data.name.size() > 0 &&
+             isValidEmail(data.email) &&
+             data.role in ['admin', 'agent', 'manager'];
+    }
+
+    function isValidTicket(data) {
+      return hasOnlyAllowedFields(['id', 'channelId', 'customerId', 'orderId', 'status', 'priority', 'sentiment', 'aiClassification', 'subject', 'createdAt', 'updatedAt', 'slaDueAt', 'isImportant', 'isFavorite', 'tags']) &&
+             data.id is string && data.subject is string && data.status in ['new', 'todo', 'waiting', 'resolved', 'closed'];
+    }
+
+    function isValidMessage(data) {
+      return hasOnlyAllowedFields(['id', 'ticketId', 'senderId', 'senderType', 'content', 'createdAt']) &&
+             data.id is string && data.content is string && data.senderType in ['customer', 'agent', 'ai', 'system'];
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAgent();
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /tickets/{ticketId} {
+      allow read: if isAgent();
+      allow create: if isAgent() && isValidTicket(request.resource.data);
+      allow update: if isAgent() && isValidTicket(request.resource.data);
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read: if isAgent();
+        allow create: if isAgent() && isValidMessage(request.resource.data);
+        allow update: if isAgent() && isValidMessage(request.resource.data);
+        allow delete: if isAdmin();
+      }
+    }
+
+    match /customers/{customerId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow read: if isAgent();
+      allow create: if isAgent();
+      allow update: if isAgent();
+      allow delete: if isAdmin();
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

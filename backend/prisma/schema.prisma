@@ -1,0 +1,323 @@
+// IntelliDesk 后端 — 与 PRD_Backend_Detailed + 前端 types 对齐
+// 文档：../PRD_Backend_Detailed.md、./ERD.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  admin
+  team_lead
+  agent
+  finance
+  operations
+  external
+}
+
+enum TicketStatus {
+  new
+  todo
+  waiting
+  snoozed
+  resolved
+  spam
+}
+
+enum AfterSalesType {
+  refund
+  return
+  exchange
+  reissue
+}
+
+enum AfterSalesStatus {
+  submitted
+  processing
+  completed
+  rejected
+}
+
+enum AfterSalesPriority {
+  low
+  medium
+  high
+}
+
+model Tenant {
+  id               String             @id @default(uuid())
+  name             String
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  users            User[]
+  channels         Channel[]
+  customers        Customer[]
+  orders           Order[]
+  tickets          Ticket[]
+  afterSales       AfterSalesRecord[]
+  agentSeats       AgentSeat[]
+  slaRules         SlaRule[]
+  autoReplyRules   AutoReplyRule[]
+  routingRules     TicketRoutingRule[]
+}
+
+model User {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email     String
+  name      String
+  passwordHash String? // 可选：演示可用 header 鉴权跳过
+  role      UserRole @default(agent)
+  avatar    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+}
+
+/// 坐席（与前端 AgentSeat / 收件箱分配）
+model AgentSeat {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  displayName String
+  email       String
+  account     String
+  roleId      String   @default("default")
+  status      String   @default("active") // active | inactive
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+/// 渠道 / 店铺展示维度（前端 channelId 可映射为 displayName 或本表 id）
+model Channel {
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  displayName    String
+  platformType   String?
+  region         String?
+  externalShopId String?
+  defaultSlaHours Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  orders  Order[]
+  tickets Ticket[]
+
+  @@index([tenantId])
+}
+
+model Customer {
+  id                String   @id @default(uuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name              String
+  email             String?
+  phone             String?
+  shippingCountry   String?
+  sentiment         String   @default("neutral")
+  segments          String[] @default([])
+  totalOrderValue   Decimal  @default(0) @db.Decimal(14, 2)
+  ordersCount       Int      @default(0)
+  latestPurchaseAt  DateTime?
+  customerSince     DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  orders  Order[]
+  tickets Ticket[]
+
+  @@index([tenantId])
+}
+
+model Order {
+  id               String   @id @default(uuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customerId       String
+  customer         Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  channelId        String
+  channel          Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  platformOrderId  String
+  skuList          String[] @default([])
+  productTitles    String[] @default([])
+  amount           Decimal  @db.Decimal(14, 2)
+  currency         String   @default("USD")
+  orderStatus      String
+  shippingStatus   String?
+  trackingNumber   String?
+  deliveryEta      String?
+  paymentStatus    String?
+  refundStatus     String?
+  returnStatus     String?
+  logisticsStatus  String?
+  carrier          String?
+  hasVatInfo       Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  logisticsEvents LogisticsEvent[]
+  tickets         Ticket[]
+  afterSales      AfterSalesRecord[]
+
+  @@unique([tenantId, platformOrderId])
+  @@index([tenantId])
+  @@index([customerId])
+}
+
+model LogisticsEvent {
+  id          String   @id @default(uuid())
+  orderId     String
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  status      String
+  subStatus   String   @default("")
+  description String   @db.Text
+  location    String?
+  timestamp   DateTime
+  sortIndex   Int      @default(0)
+
+  @@index([orderId])
+}
+
+model Ticket {
+  id                        String       @id @default(uuid())
+  tenantId                  String
+  tenant                    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channelId                 String
+  channel                   Channel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  customerId                String
+  customer                  Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  orderId                   String?
+  order                     Order?       @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  status                    TicketStatus @default(new)
+  priority                  Int          @default(3)
+  sentiment                 String       @default("neutral")
+  intent                    String       @default("")
+  messageProcessingStatus   String       @default("unread")
+  subject                   String
+  subjectOriginal           String?
+  slaDueAt                  DateTime
+  isImportant               Boolean      @default(false)
+  isFavorite                Boolean      @default(false)
+  isShared                  Boolean      @default(false)
+  tags                      String[]     @default([])
+  assignedSeatId            String?
+  ownerUserId               String?
+  firstResponseAt           DateTime?
+  resolvedAt                DateTime?
+  createdAt                 DateTime     @default(now())
+  updatedAt                 DateTime     @updatedAt
+
+  messages   Message[]
+  afterSales AfterSalesRecord[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, messageProcessingStatus])
+  @@index([updatedAt])
+}
+
+model Message {
+  id                 String   @id @default(uuid())
+  ticketId           String
+  ticket             Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  senderId           String
+  senderType         String
+  content            String   @db.Text
+  isInternal         Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  attachments        String[] @default([])
+  translatedContent  String?  @db.Text
+  sentPlatformText   String?  @db.Text
+  deliveryTargets    String[] @default([])
+
+  @@index([ticketId])
+  @@index([ticketId, createdAt])
+}
+
+model AfterSalesRecord {
+  id                  String             @id @default(uuid())
+  tenantId            String
+  tenant              Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orderId             String
+  order               Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  ticketId            String
+  ticket              Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  type                AfterSalesType
+  status              AfterSalesStatus   @default(submitted)
+  priority            AfterSalesPriority @default(medium)
+  handlingMethod      String             @default("")
+  problemType         String             @default("")
+  buyerFeedback       String             @db.Text
+  refundAmount        Decimal?           @db.Decimal(14, 2)
+  refundReason        String?
+  returnTrackingNumber String?
+  returnCarrier       String?
+  reissueSku          String?
+  reissueQuantity     Int?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  @@index([tenantId])
+  @@index([orderId])
+  @@index([ticketId])
+}
+
+/// SLA 规则（阶段 G）
+model SlaRule {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  channelPattern String? // 可选：匹配渠道
+  warningHours Int     @default(4)
+  timeoutHours Int     @default(24)
+  enabled     Boolean  @default(true)
+  conditions  Json?    // 扩展：星期、标签等
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+/// 自动回复规则（阶段 G）
+model AutoReplyRule {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  enabled     Boolean  @default(true)
+  intentMatch String?
+  keywords    String[] @default([])
+  templateId  String?
+  markRepliedOnSend Boolean @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+/// 工单路由规则（与前端 TicketRoutingRule 对齐）
+model TicketRoutingRule {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  priority    Int      @default(0)
+  conditions  Json
+  targetSeatId String?
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+}

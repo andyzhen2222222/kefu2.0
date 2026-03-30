@@ -1,0 +1,505 @@
+openapi: 3.1.0
+info:
+  title: IntelliDesk API
+  version: 0.1.0
+  description: |
+    与 PRD_Backend_Detailed 对齐。鉴权：请求头 `X-Tenant-Id`（必填）、`X-User-Id`（可选，演示用已存在用户 id）。
+servers:
+  - url: http://localhost:4000
+    description: 本地开发
+
+tags:
+  - name: tickets
+  - name: orders
+  - name: after-sales
+  - name: ai
+  - name: dashboard
+  - name: settings
+
+components:
+  securitySchemes:
+    TenantHeader:
+      type: apiKey
+      in: header
+      name: X-Tenant-Id
+  parameters:
+    TenantId:
+      name: X-Tenant-Id
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+    UserId:
+      name: X-User-Id
+      in: header
+      required: false
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+    Ticket:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        channelId: { type: string, description: 渠道展示名，兼容前端 }
+        channelRefId: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        orderId: { type: string, format: uuid, nullable: true }
+        status:
+          type: string
+          enum: [new, todo, waiting, snoozed, resolved, spam]
+        priority: { type: integer }
+        sentiment: { type: string }
+        intent: { type: string }
+        messageProcessingStatus:
+          type: string
+          enum: [unread, unreplied, replied]
+        subject: { type: string }
+        subjectOriginal: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        firstResponseAt: { type: string, format: date-time, nullable: true }
+        resolvedAt: { type: string, format: date-time, nullable: true }
+        slaDueAt: { type: string, format: date-time }
+        isImportant: { type: boolean }
+        isFavorite: { type: boolean }
+        isShared: { type: boolean }
+        tags:
+          type: array
+          items: { type: string }
+        assignedSeatId: { type: string, nullable: true }
+        ownerUserId: { type: string, nullable: true }
+    Message:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ticketId: { type: string, format: uuid }
+        senderId: { type: string }
+        senderType:
+          type: string
+          enum: [customer, manager, agent, system, ai]
+        content: { type: string }
+        createdAt: { type: string, format: date-time }
+        attachments:
+          type: array
+          items: { type: string }
+        isInternal: { type: boolean }
+        translatedContent: { type: string, nullable: true }
+        sentPlatformText: { type: string, nullable: true }
+        deliveryTargets:
+          type: array
+          items:
+            type: string
+            enum: [customer, manager]
+    TicketDetail:
+      allOf:
+        - $ref: '#/components/schemas/Ticket'
+        - type: object
+          properties:
+            messages:
+              type: array
+              items: { $ref: '#/components/schemas/Message' }
+    Pagination:
+      type: object
+      properties:
+        limit: { type: integer }
+        cursor: { type: string, nullable: true }
+        nextCursor: { type: string, nullable: true }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Ticket' }
+
+security:
+  - TenantHeader: []
+
+paths:
+  /health:
+    get:
+      security: []
+      summary: 健康检查
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+
+  /api/tickets:
+    get:
+      tags: [tickets]
+      summary: 工单列表
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: priority
+          in: query
+          schema: { type: integer }
+        - name: channelId
+          in: query
+          schema: { type: string, description: Channel UUID 或 displayName 模糊 }
+        - name: messageProcessingStatus
+          in: query
+          schema: { type: string, enum: [unread, unreplied, replied] }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: filter
+          in: query
+          description: 仪表盘跳转 — sla_overdue 等
+          schema:
+            type: string
+            enum: [unread, unreplied, replied, sla_overdue]
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+        - name: cursor
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Pagination' }
+
+  /api/tickets/{id}:
+    get:
+      tags: [tickets]
+      summary: 工单详情含消息
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TicketDetail' }
+        '404': { description: Not found }
+    patch:
+      tags: [tickets]
+      summary: 更新工单
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string }
+                priority: { type: integer }
+                tags: { type: array, items: { type: string } }
+                messageProcessingStatus: { type: string }
+                assignedSeatId: { type: string, nullable: true }
+                isFavorite: { type: boolean }
+                isImportant: { type: boolean }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+
+  /api/tickets/{id}/messages:
+    post:
+      tags: [tickets]
+      summary: 发送消息或内部备注
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content, senderType]
+              properties:
+                content: { type: string }
+                senderType: { type: string }
+                senderId: { type: string }
+                isInternal: { type: boolean, default: false }
+                attachments: { type: array, items: { type: string } }
+                translatedContent: { type: string }
+                sentPlatformText: { type: string }
+                deliveryTargets:
+                  type: array
+                  items: { type: string }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Message' }
+
+  /api/orders/{id}:
+    get:
+      tags: [orders]
+      summary: 订单详情
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: Order DTO }
+        '404': { description: Not found }
+
+  /api/orders/{id}/logistics:
+    get:
+      tags: [orders]
+      summary: 物流事件
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: events array }
+
+  /api/after-sales:
+    get:
+      tags: [after-sales]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200': { description: list }
+    post:
+      tags: [after-sales]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201': { description: created }
+
+  /api/after-sales/{id}:
+    get:
+      tags: [after-sales]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+    patch:
+      tags: [after-sales]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+
+  /api/ai/summarize:
+    post:
+      tags: [ai]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticketId]
+              properties:
+                ticketId: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  summary: { type: string }
+
+  /api/ai/suggest-reply:
+    post:
+      tags: [ai]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticketId]
+              properties:
+                ticketId: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  suggestion: { type: string }
+
+  /api/dashboard/inbox-metrics:
+    get:
+      tags: [dashboard]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: 四卡指标 + 环比
+
+  /api/dashboard/structure:
+    get:
+      tags: [dashboard]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200': { description: 结构分布 }
+
+  /api/dashboard/trends:
+    get:
+      tags: [dashboard]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: range
+          in: query
+          schema: { type: string, enum: [7d, 30d] }
+      responses:
+        '200': { description: 趋势序列 }
+
+  /api/settings/agent-seats:
+    get:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+    post:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+
+  /api/settings/agent-seats/{id}:
+    patch:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+    delete:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+
+  /api/settings/sla-rules:
+    get:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+    post:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+
+  /api/settings/sla-rules/{id}:
+    patch:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+    delete:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+
+  /api/settings/auto-reply-rules:
+    get:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+    post:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+
+  /api/settings/auto-reply-rules/{id}:
+    patch:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+    delete:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+
+  /api/settings/ticket-routing-rules:
+    get:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+    post:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+
+  /api/settings/ticket-routing-rules/{id}:
+    patch:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+    delete:
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }

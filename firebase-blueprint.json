@@ -1,0 +1,114 @@
+{
+  "entities": {
+    "users": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "User's unique ID" },
+        "name": { "type": "string", "description": "User's full name" },
+        "email": { "type": "string", "format": "email", "description": "User's email address" },
+        "role": { "type": "string", "enum": ["admin", "agent", "manager"], "description": "User's role in the system" },
+        "avatar": { "type": "string", "description": "URL to user's avatar image" }
+      },
+      "required": ["id", "name", "email", "role"]
+    },
+    "tickets": {
+      "title": "Ticket",
+      "description": "Customer service ticket",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Ticket unique ID" },
+        "channelId": { "type": "string", "description": "Platform channel ID (e.g., Amazon, eBay)" },
+        "customerId": { "type": "string", "description": "ID of the customer who created the ticket" },
+        "orderId": { "type": "string", "description": "Associated order ID" },
+        "status": { "type": "string", "enum": ["new", "todo", "waiting", "resolved", "closed"], "description": "Current status of the ticket" },
+        "priority": { "type": "integer", "description": "Priority level (1-5)" },
+        "sentiment": { "type": "string", "enum": ["positive", "neutral", "negative", "urgent"], "description": "AI-detected sentiment" },
+        "aiClassification": { "type": "string", "description": "AI-detected category" },
+        "subject": { "type": "string", "description": "Ticket subject line" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" },
+        "slaDueAt": { "type": "string", "format": "date-time", "description": "SLA deadline" },
+        "isImportant": { "type": "boolean", "description": "Flag for important tickets" },
+        "isFavorite": { "type": "boolean", "description": "Flag for favorite tickets" },
+        "tags": { "type": "array", "items": { "type": "string" }, "description": "List of tags" }
+      },
+      "required": ["id", "channelId", "customerId", "status", "priority", "subject", "createdAt", "updatedAt"]
+    },
+    "messages": {
+      "title": "Message",
+      "description": "A single message within a ticket",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Message unique ID" },
+        "ticketId": { "type": "string", "description": "Parent ticket ID" },
+        "senderId": { "type": "string", "description": "ID of the sender (user or customer)" },
+        "senderType": { "type": "string", "enum": ["customer", "agent", "ai", "system"], "description": "Type of sender" },
+        "content": { "type": "string", "description": "Message content (Markdown supported)" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["id", "ticketId", "senderId", "senderType", "content", "createdAt"]
+    },
+    "customers": {
+      "title": "Customer",
+      "description": "Customer information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Customer unique ID" },
+        "name": { "type": "string", "description": "Customer's name" },
+        "email": { "type": "string", "format": "email", "description": "Customer's email" },
+        "shippingCountry": { "type": "string", "description": "Shipping country" },
+        "sentiment": { "type": "string", "enum": ["positive", "neutral", "negative", "urgent"], "description": "Overall customer sentiment" },
+        "segments": { "type": "array", "items": { "type": "string" }, "description": "Customer segments" },
+        "totalOrderValue": { "type": "number", "description": "Total value of all orders" },
+        "ordersCount": { "type": "integer", "description": "Total number of orders" },
+        "latestPurchaseAt": { "type": "string", "format": "date-time", "description": "Last purchase timestamp" },
+        "customerSince": { "type": "string", "format": "date-time", "description": "Registration timestamp" }
+      },
+      "required": ["id", "name", "email"]
+    },
+    "orders": {
+      "title": "Order",
+      "description": "Order information from platforms",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Internal order ID" },
+        "platformOrderId": { "type": "string", "description": "Original platform order ID" },
+        "customerId": { "type": "string", "description": "Customer ID" },
+        "channelId": { "type": "string", "description": "Platform channel ID" },
+        "skuList": { "type": "array", "items": { "type": "string" }, "description": "List of SKUs" },
+        "productTitles": { "type": "array", "items": { "type": "string" }, "description": "List of product titles" },
+        "amount": { "type": "number", "description": "Total order amount" },
+        "currency": { "type": "string", "description": "Currency code" },
+        "shippingStatus": { "type": "string", "description": "Current shipping status" },
+        "trackingNumber": { "type": "string", "description": "Tracking number" },
+        "deliveryEta": { "type": "string", "description": "Estimated delivery date" },
+        "paymentStatus": { "type": "string", "description": "Payment status" }
+      },
+      "required": ["id", "platformOrderId", "customerId", "channelId", "amount", "currency"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "users",
+      "description": "User profiles"
+    },
+    "/tickets/{ticketId}": {
+      "schema": "tickets",
+      "description": "Customer service tickets"
+    },
+    "/tickets/{ticketId}/messages/{messageId}": {
+      "schema": "messages",
+      "description": "Messages within a ticket"
+    },
+    "/customers/{customerId}": {
+      "schema": "customers",
+      "description": "Customer data"
+    },
+    "/orders/{orderId}": {
+      "schema": "orders",
+      "description": "Order data"
+    }
+  }
+}
