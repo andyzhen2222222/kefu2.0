@@ -5,6 +5,7 @@ import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import { prisma } from './lib/prisma.js';
 import { requireTenant } from './middleware/tenant.js';
+import { augmentUserFromFirebase } from './middleware/firebaseUser.js';
 import { wsRegister } from './lib/wsHub.js';
 import ticketsRouter from './routes/tickets.js';
 import ordersRouter from './routes/orders.js';
@@ -14,7 +15,7 @@ import dashboardRouter from './routes/dashboard.js';
 import settingsRouter from './routes/settings.js';
 
 const app = express();
-const port = Number(process.env.PORT) || 4000;
+const port = Number(process.env.PORT) || 4001;
 
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
@@ -23,12 +24,13 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.use('/api/tickets', requireTenant, ticketsRouter);
-app.use('/api/orders', requireTenant, ordersRouter);
-app.use('/api/after-sales', requireTenant, afterSalesRouter);
-app.use('/api/ai', requireTenant, aiRouter);
-app.use('/api/dashboard', requireTenant, dashboardRouter);
-app.use('/api/settings', requireTenant, settingsRouter);
+const apiChain = [requireTenant, augmentUserFromFirebase] as const;
+app.use('/api/tickets', ...apiChain, ticketsRouter);
+app.use('/api/orders', ...apiChain, ordersRouter);
+app.use('/api/after-sales', ...apiChain, afterSalesRouter);
+app.use('/api/ai', ...apiChain, aiRouter);
+app.use('/api/dashboard', ...apiChain, dashboardRouter);
+app.use('/api/settings', ...apiChain, settingsRouter);
 
 const server = createServer(app);
 

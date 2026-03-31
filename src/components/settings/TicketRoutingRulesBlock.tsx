@@ -1,8 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Plus, Trash2, Edit2, GitBranch, AlertTriangle, X } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import type { TicketRoutingRule } from '@/src/types';
 import { Link } from 'react-router-dom';
+import {
+  fetchTicketRoutingRules,
+  createTicketRoutingRule,
+  patchTicketRoutingRule,
+  deleteTicketRoutingRule,
+  type ApiTicketRoutingRuleRow,
+} from '@/src/services/intellideskApi';
 
 const PLATFORM_OPTS = [
   { value: '', label: '全部平台' },
@@ -55,18 +62,47 @@ function labelFrom(opts: { value: string; label: string }[], value: string): str
   return opts.find((o) => o.value === value)?.label || (value || '—');
 }
 
+function routingRuleApiToUi(row: ApiTicketRoutingRuleRow): TicketRoutingRule {
+  const c =
+    row.conditions && typeof row.conditions === 'object' && !Array.isArray(row.conditions)
+      ? (row.conditions as Record<string, string>)
+      : {};
+  return {
+    id: row.id,
+    priority: row.priority,
+    platform: typeof c.platform === 'string' ? c.platform : '',
+    store: typeof c.store === 'string' ? c.store : '',
+    afterSalesType: typeof c.afterSalesType === 'string' ? c.afterSalesType : '',
+    assignToSeatId: row.targetSeatId ?? '',
+    enabled: row.enabled,
+  };
+}
+
+function buildRoutingRuleName(form: TicketRoutingRule): string {
+  const p = [form.platform, form.store, form.afterSalesType].filter(Boolean);
+  return p.length ? `路由: ${p.join(' / ')}` : `工单路由 #${form.priority}`;
+}
+
 export interface TicketRoutingRulesBlockProps {
   /** 当前可用坐席，与上一步「客服坐席」列表同步 */
   seatOptions: { id: string; label: string }[];
   /** 「先到坐席维护」提示中的链接，默认本页第二步 */
   seatsStepHref?: string;
+  /** 配置 API 后从后端读写工单路由规则 */
+  routingApi?: { tenantId: string; userId: string | undefined };
 }
 
 export default function TicketRoutingRulesBlock({
   seatOptions,
   seatsStepHref = '/settings/seats?step=2',
+  routingApi,
 }: TicketRoutingRulesBlockProps) {
-  const [rules, setRules] = useState<TicketRoutingRule[]>(INITIAL_RULES);
+  const tid = routingApi?.tenantId;
+  const uid = routingApi?.userId;
+
+  const [rules, setRules] = useState<TicketRoutingRule[]>([]);
+  const [routingErr, setRoutingErr] = useState<string | null>(null);
+  const [routingBusy, setRoutingBusy] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<TicketRoutingRule | null>(null);
   const [form, setForm] = useState<TicketRoutingRule>({
@@ -78,6 +114,28 @@ export default function TicketRoutingRulesBlock({
     assignToSeatId: '',
     enabled: true,
   });
+
+  const loadRules = useCallback(async () => {
+    if (!tid) {
+      setRules([...INITIAL_RULES]);
+      setRoutingErr(null);
+      return;
+    }
+    setRoutingBusy(true);
+    setRoutingErr(null);
+    try {
+      const rows = await fetchTicketRoutingRules(tid, uid);
+      setRules(rows.map(routingRuleApiToUi));
+    } catch (e) {
+      setRoutingErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRoutingBusy(false);
+    }
+  }, [tid, uid]);
+
+  useEffect(() => {
+    void loadRules();
+  }, [loadRules]);
 
   const seatLabel = (id: string) => seatOptions.find((s) => s.id === id)?.label || id;
 
@@ -102,8 +160,45 @@ export default function TicketRoutingRulesBlock({
     setModalOpen(true);
   };
 
-  const saveRule = () => {
+  const saveRule = async () => {
     if (!form.assignToSeatId) return;
+    const conditions: Record<string, unknown> = {};
+    if (form.platform) conditions.platform = form.platform;
+    if (form.store) conditions.store = form.store;
+    if (form.afterSalesType) conditions.afterSalesType = form.afterSalesType;
+
+    if (tid) {
+      try {
+        setRoutingBusy(true);
+        setRoutingErr(null);
+        const name = buildRoutingRuleName(form);
+        if (editing) {
+          await patchTicketRoutingRule(tid, uid, editing.id, {
+            name,
+            priority: form.priority,
+            conditions,
+            targetSeatId: form.assignToSeatId,
+            enabled: form.enabled,
+          });
+        } else {
+          await createTicketRoutingRule(tid, uid, {
+            name,
+            priority: form.priority,
+            conditions,
+            targetSeatId: form.assignToSeatId,
+            enabled: form.enabled,
+          });
+        }
+        await loadRules();
+        setModalOpen(false);
+      } catch (e) {
+        setRoutingErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setRoutingBusy(false);
+      }
+      return;
+    }
+
     if (editing) {
       setRules((prev) =>
         prev
@@ -118,8 +213,21 @@ export default function TicketRoutingRulesBlock({
     setModalOpen(false);
   };
 
-  const deleteRule = (id: string) => {
+  const deleteRule = async (id: string) => {
     if (!window.confirm('删除该规则？')) return;
+    if (tid) {
+      try {
+        setRoutingBusy(true);
+        setRoutingErr(null);
+        await deleteTicketRoutingRule(tid, uid, id);
+        await loadRules();
+      } catch (e) {
+        setRoutingErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setRoutingBusy(false);
+      }
+      return;
+    }
     setRules((prev) => prev.filter((r) => r.id !== id));
   };
 
@@ -151,6 +259,16 @@ export default function TicketRoutingRulesBlock({
           </p>
         </div>
       </div>
+
+      {routingErr && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {routingErr}
+        </div>
+      )}
+
+      {tid && routingBusy && (
+        <p className="text-sm text-slate-500">正在同步路由规则…</p>
+      )}
 
       {seatOptions.length === 0 && (
         <div className="p-4 rounded-xl bg-slate-100 border border-slate-200 text-sm text-slate-700">
@@ -218,7 +336,7 @@ export default function TicketRoutingRulesBlock({
                     </button>
                     <button
                       type="button"
-                      onClick={() => deleteRule(r.id)}
+                      onClick={() => void deleteRule(r.id)}
                       className="p-2 text-slate-500 hover:text-red-600 rounded-lg inline-flex"
                       title="删除"
                     >
@@ -334,11 +452,11 @@ export default function TicketRoutingRulesBlock({
               </button>
               <button
                 type="button"
-                onClick={saveRule}
-                disabled={!form.assignToSeatId || seatOptions.length === 0}
+                onClick={() => void saveRule()}
+                disabled={!form.assignToSeatId || seatOptions.length === 0 || routingBusy}
                 className="px-5 py-2 text-sm font-bold text-white bg-[#F97316] rounded-xl hover:bg-orange-600 disabled:opacity-50"
               >
-                保存
+                {routingBusy ? '保存中…' : '保存'}
               </button>
             </div>
           </div>

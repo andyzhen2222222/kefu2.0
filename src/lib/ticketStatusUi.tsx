@@ -329,16 +329,56 @@ const MESSAGE_PROCESSING_SELECT: { value: MessageProcessingStatus; label: string
   { value: 'replied', label: '已回复' },
 ];
 
+/** 与 TicketDetail「分配给坐席」下拉同一套视觉：白底、灰边框、slate 文字 */
+export const detailHeaderSelectClassName =
+  'w-full text-xs font-semibold border border-slate-200 rounded-lg pl-2 pr-8 py-1.5 bg-white text-slate-800 outline-none hover:border-slate-300 focus:ring-2 focus:ring-[#F97316]/25 focus:border-[#F97316] truncate cursor-pointer appearance-none';
+
+/** 工单详情顶栏：会话处理状态下拉（样式与分配给坐席一致） */
+export function TicketConversationStatusSelect({
+  ticket,
+  onChange,
+  className,
+  selectId,
+}: {
+  ticket: Ticket;
+  onChange: (status: MessageProcessingStatus) => void;
+  className?: string;
+  selectId?: string;
+}) {
+  const conv = messageProcessingPresentation(ticket.messageProcessingStatus);
+  return (
+    <div className={cn('relative w-full min-w-0', className)} title={conv.tooltip}>
+      <select
+        id={selectId}
+        value={ticket.messageProcessingStatus}
+        onChange={(e) => onChange(e.target.value as MessageProcessingStatus)}
+        className={detailHeaderSelectClassName}
+        aria-label="会话状态"
+      >
+        {MESSAGE_PROCESSING_SELECT.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+    </div>
+  );
+}
+
 /** 会话详情顶栏：五类状态完整文案 */
 export function TicketDetailStatusChips({
   ticket,
   order,
   onMessageProcessingStatusChange,
+  renderConversationAside = false,
 }: {
   ticket: Ticket;
   order?: Order | null;
   /** 传入时「会话」标签可点击展开系统下拉，直接修改处理状态 */
   onMessageProcessingStatusChange?: (status: MessageProcessingStatus) => void;
+  /** 为 true 且同时传入 onMessageProcessingStatusChange 时，不在本行渲染「会话」控件（由顶栏右侧承载） */
+  renderConversationAside?: boolean;
 }) {
   const ord = orderPresentation(order);
   const sent = sentimentPresentation(ticket.sentiment);
@@ -411,37 +451,16 @@ export function TicketDetailStatusChips({
   return (
     <div className="flex flex-wrap items-center gap-2 mt-2">
       {chips.map((c) => {
+        if (c.key === 'conv' && renderConversationAside && onMessageProcessingStatusChange) {
+          return null;
+        }
         if (c.key === 'conv' && onMessageProcessingStatusChange) {
           return (
-            <div
+            <TicketConversationStatusSelect
               key={c.key}
-              className={cn(
-                'relative inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium',
-                c.chip,
-                'cursor-pointer hover:brightness-[0.98] focus-within:ring-2 focus-within:ring-[#F97316]/25 focus-within:ring-offset-1 focus-within:ring-offset-white'
-              )}
-              title={conv.tooltip}
-            >
-              <select
-                value={ticket.messageProcessingStatus}
-                onChange={(e) =>
-                  onMessageProcessingStatusChange(e.target.value as MessageProcessingStatus)
-                }
-                className="absolute inset-0 z-[1] h-full w-full cursor-pointer rounded-lg opacity-0"
-                aria-label="会话状态"
-              >
-                {MESSAGE_PROCESSING_SELECT.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-              <conv.Icon className="w-3 h-3 shrink-0 opacity-80 pointer-events-none" />
-              <span className="pointer-events-none">
-                会话 · <span className="font-semibold">{conv.label}</span>
-              </span>
-              <ChevronDown className="w-3 h-3 shrink-0 opacity-45 pointer-events-none" strokeWidth={2.5} />
-            </div>
+              ticket={ticket}
+              onChange={onMessageProcessingStatusChange}
+            />
           );
         }
         return (

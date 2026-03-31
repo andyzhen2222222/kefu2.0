@@ -1,10 +1,36 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import InboxList from './InboxList';
 import TicketDetail from '../ticket/TicketDetail';
-import { Ticket, TicketStatus, Sentiment, Message, Order, Customer, LogisticsStatus } from '@/src/types';
+import {
+  Ticket,
+  TicketStatus,
+  Sentiment,
+  Message,
+  Order,
+  Customer,
+  LogisticsStatus,
+} from '@/src/types';
 import { useAuth } from '@/src/hooks/useAuth';
 import { MessageSquare } from 'lucide-react';
+import {
+  intellideskConfigured,
+  intellideskTenantId,
+  intellideskUserIdForApi,
+  fetchTicketsList,
+  fetchTicketDetail,
+  fetchAgentSeats,
+  patchTicket,
+  postTicketMessage,
+  mapApiTicketToUi,
+  mapApiMessageToUi,
+  mapApiCustomerToUi,
+  mapApiOrderToUi,
+  intellideskWsUrl,
+  type PatchTicketBody,
+  type ApiMessageRaw,
+  type ApiTicketRaw,
+} from '@/src/services/intellideskApi';
 
 /** 与设置-坐席与分配中的演示坐席 id 对齐 */
 const MAILBOX_SEAT_OPTIONS: { id: string; label: string }[] = [
@@ -182,7 +208,7 @@ const MOCK_TICKETS: Ticket[] = [
   },
   {
     id: 'T-1003',
-    channelId: 'Shopify',
+    channelId: 'Shopify Main Store',
     customerId: 'C-5003',
     orderId: 'ORD-9903',
     status: TicketStatus.WAITING,
@@ -530,7 +556,7 @@ const MOCK_ORDERS: Record<string, Order> = {
     id: 'ORD-9903',
     platformOrderId: 'SHOPIFY-8899',
     customerId: 'C-5003',
-    channelId: 'Shopify',
+    channelId: 'Shopify Main Store',
     skuList: ['SKU-CASE-BLU'],
     productTitles: ['Premium Silicone Case - Blue'],
     amount: 15.00,
@@ -826,30 +852,210 @@ function cloneMockMessages(): Record<string, Message[]> {
 export default function MailboxPage() {
   const { ticketId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
-  const [tickets, setTickets] = useState<Ticket[]>(() => MOCK_TICKETS.map((t) => ({ ...t })));
+
+  const live = intellideskConfigured();
+  const tenantId = intellideskTenantId();
+  const apiUserId = intellideskUserIdForApi(user?.id);
+
+  const filter = useMemo(() => {
+    const f = searchParams.get('filter');
+    if (
+      f === 'unread' ||
+      f === 'unreplied' ||
+      f === 'replied' ||
+      f === 'sla_overdue'
+    ) {
+      return f;
+    }
+    return undefined;
+  }, [searchParams]);
+
+  const mailboxSearchSuffix = filter ? `?filter=${encodeURIComponent(filter)}` : '';
+
+  const [tickets, setTickets] = useState<Ticket[]>(() =>
+    live ? [] : MOCK_TICKETS.map((t) => ({ ...t }))
+  );
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [messagesByTicket, setMessagesByTicket] = useState<Record<string, Message[]>>(() =>
-    cloneMockMessages()
+    live ? {} : cloneMockMessages()
   );
   const [seatAssignmentByTicket, setSeatAssignmentByTicket] = useState<Record<string, string>>({});
+  const [seatOptions, setSeatOptions] = useState<{ id: string; label: string }[]>(
+    MAILBOX_SEAT_OPTIONS
+  );
+  const [ordersMap, setOrdersMap] = useState<Record<string, Order>>({});
+  const [customersMap, setCustomersMap] = useState<Record<string, Customer>>({});
+  const [listLoading, setListLoading] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  const listReqId = useRef(0);
 
   useEffect(() => {
+    if (!live) return;
+    let cancelled = false;
+    fetchAgentSeats(tenantId, apiUserId)
+      .then((rows) => {
+        if (cancelled) return;
+        const opts = rows
+          .filter((r) => r.status === 'active')
+          .map((r) => ({ id: r.id, label: r.displayName }));
+        setSeatOptions(opts.length ? opts : MAILBOX_SEAT_OPTIONS);
+      })
+      .catch(() => {
+        if (!cancelled) setSeatOptions(MAILBOX_SEAT_OPTIONS);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [live, tenantId, apiUserId]);
+
+  useEffect(() => {
+    if (!live) return;
+    const req = ++listReqId.current;
+    let cancelled = false;
+    setApiError(null);
+    void (async () => {
+      try {
+        setListLoading(true);
+        const res = await fetchTicketsList(tenantId, apiUserId, {
+          ...(filter ? { filter } : {}),
+          limit: '200',
+        });
+        if (cancelled || req !== listReqId.current) return;
+        setTickets(res.items.map(mapApiTicketToUi));
+        setMessagesByTicket({});
+      } catch (e) {
+        if (!cancelled && req === listReqId.current) {
+          setApiError(e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        if (!cancelled && req === listReqId.current) setListLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [live, tenantId, apiUserId, filter]);
+
+  useEffect(() => {
+    if (!live || !ticketId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        setDetailLoading(true);
+        const d = await fetchTicketDetail(tenantId, apiUserId, ticketId);
+        if (cancelled) return;
+        const t = mapApiTicketToUi(d);
+        setTickets((prev) => {
+          const i = prev.findIndex((x) => x.id === t.id);
+          if (i < 0) return [t, ...prev];
+          const n = [...prev];
+          n[i] = t;
+          return n;
+        });
+        setMessagesByTicket((prev) => ({
+          ...prev,
+          [t.id]: d.messages.map(mapApiMessageToUi),
+        }));
+        if (d.customer) {
+          setCustomersMap((prev) => ({
+            ...prev,
+            [d.customer.id]: mapApiCustomerToUi(d.customer),
+          }));
+        }
+        if (d.order) {
+          setOrdersMap((prev) => ({
+            ...prev,
+            [d.order.id]: mapApiOrderToUi(d.order),
+          }));
+        }
+        setApiError(null);
+      } catch (e) {
+        if (!cancelled) setApiError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setDetailLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [live, ticketId, tenantId, apiUserId]);
+
+  useEffect(() => {
+    if (!live) return;
+    const url = intellideskWsUrl(tenantId);
+    if (!url) return;
+    const ws = new WebSocket(url);
+    ws.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data as string) as {
+          type?: string;
+          ticketId?: string;
+          message?: ApiMessageRaw;
+          ticket?: ApiTicketRaw;
+        };
+        if (data.type === 'message_created' && data.ticketId && data.message) {
+          const msg = mapApiMessageToUi(data.message);
+          setMessagesByTicket((prev) => {
+            const cur = prev[data.ticketId!] ?? [];
+            if (cur.some((m) => m.id === msg.id)) return prev;
+            return { ...prev, [data.ticketId!]: [...cur, msg] };
+          });
+          setTickets((prev) =>
+            prev.map((x) =>
+              x.id === data.ticketId ? { ...x, updatedAt: msg.createdAt } : x
+            )
+          );
+        }
+        if (data.type === 'ticket_updated' && data.ticket) {
+          const t = mapApiTicketToUi(data.ticket);
+          setTickets((prev) => {
+            const i = prev.findIndex((x) => x.id === t.id);
+            if (i < 0) return [t, ...prev];
+            const n = [...prev];
+            n[i] = { ...n[i], ...t };
+            return n;
+          });
+        }
+      } catch {
+        /* ignore malformed */
+      }
+    };
+    return () => {
+      ws.close();
+    };
+  }, [live, tenantId]);
+
+  useEffect(() => {
+    if (live) {
+      if (ticketId) {
+        const ticket = tickets.find((t) => t.id === ticketId);
+        setSelectedTicket(ticket ?? null);
+      } else if (!listLoading && tickets.length > 0) {
+        navigate(`/mailbox/${tickets[0].id}${mailboxSearchSuffix}`, { replace: true });
+      } else if (!listLoading && tickets.length === 0) {
+        setSelectedTicket(null);
+      }
+      return;
+    }
     if (ticketId) {
       const ticket = tickets.find((t) => t.id === ticketId);
-      if (ticket) {
-        setSelectedTicket(ticket);
-      }
+      if (ticket) setSelectedTicket(ticket);
     } else if (tickets.length > 0) {
       navigate(`/mailbox/${tickets[0].id}`);
     }
-  }, [ticketId, navigate, tickets]);
+  }, [ticketId, navigate, tickets, live, listLoading, mailboxSearchSuffix]);
+
+  const ordersForList = live ? ordersMap : MOCK_ORDERS;
+  const customersForList = live ? customersMap : MOCK_CUSTOMERS;
 
   const handleSendMessage = (payload: {
     content: string;
     recipients: ('customer' | 'manager')[];
     isInternal: boolean;
-    /** 发送前是否译为店铺平台语言（演示：生成 sentPlatformText） */
     translateToPlatform?: boolean;
   }) => {
     if (!selectedTicket) return;
@@ -858,6 +1064,36 @@ export default function MailboxPage() {
       !payload.isInternal &&
       payload.translateToPlatform &&
       payload.recipients.length > 0;
+
+    if (live) {
+      void (async () => {
+        try {
+          const created = await postTicketMessage(tenantId, apiUserId, tid, {
+            content: payload.content,
+            senderType: 'agent',
+            senderId: user?.name || 'agent',
+            isInternal: payload.isInternal,
+            sentPlatformText: doTranslate
+              ? mockTranslateToPlatformLanguage(payload.content, selectedTicket.channelId)
+              : undefined,
+            deliveryTargets:
+              !payload.isInternal && payload.recipients.length > 0
+                ? [...payload.recipients]
+                : undefined,
+          });
+          setMessagesByTicket((prev) => {
+            const cur = prev[tid] || [];
+            const mapped = mapApiMessageToUi(created);
+            if (cur.some((m) => m.id === mapped.id)) return prev;
+            return { ...prev, [tid]: [...cur, mapped] };
+          });
+          setApiError(null);
+        } catch (e) {
+          setApiError(e instanceof Error ? e.message : String(e));
+        }
+      })();
+      return;
+    }
 
     const newMsg: Message = {
       id: `M-${Date.now()}`,
@@ -888,49 +1124,124 @@ export default function MailboxPage() {
   const handleUpdateTicket = (patch: Partial<Ticket>) => {
     if (!selectedTicket) return;
     const id = selectedTicket.id;
+
+    if (live) {
+      const body: PatchTicketBody = {};
+      if (patch.messageProcessingStatus != null)
+        body.messageProcessingStatus = patch.messageProcessingStatus;
+      if (patch.status != null) body.status = patch.status;
+      if (patch.assignedSeatId !== undefined)
+        body.assignedSeatId = patch.assignedSeatId ?? null;
+      if (patch.priority != null) body.priority = patch.priority;
+      if (patch.tags != null) body.tags = patch.tags;
+      if (patch.isFavorite != null) body.isFavorite = patch.isFavorite;
+      if (patch.isImportant != null) body.isImportant = patch.isImportant;
+      if (patch.subject != null) body.subject = patch.subject;
+      if (patch.subjectOriginal !== undefined)
+        body.subjectOriginal = patch.subjectOriginal ?? null;
+      if (patch.intent != null) body.intent = patch.intent;
+      if (patch.sentiment != null) body.sentiment = patch.sentiment;
+
+      if (Object.keys(body).length === 0) return;
+
+      void (async () => {
+        try {
+          const updated = await patchTicket(tenantId, apiUserId, id, body);
+          const t = mapApiTicketToUi(updated);
+          setTickets((prev) => prev.map((x) => (x.id === id ? t : x)));
+          setSelectedTicket((s) => (s?.id === id ? t : s));
+          setApiError(null);
+        } catch (e) {
+          setApiError(e instanceof Error ? e.message : String(e));
+        }
+      })();
+      return;
+    }
+
     setTickets((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
     setSelectedTicket((t) => (t && t.id === id ? { ...t, ...patch } : t));
   };
 
   return (
-    <div className="flex h-full overflow-hidden">
-      <InboxList
-        tickets={tickets}
-        orders={MOCK_ORDERS}
-        customers={MOCK_CUSTOMERS}
-        selectedTicketId={ticketId}
-      />
+    <div className="flex h-full overflow-hidden flex-col">
+      {apiError ? (
+        <div className="shrink-0 px-4 py-2 bg-red-50 text-red-800 text-sm border-b border-red-100">
+          {apiError}
+        </div>
+      ) : null}
+      {live && !listLoading && !apiError && tickets.length === 0 ? (
+        <div className="shrink-0 px-4 py-3 bg-amber-50 border-b border-amber-200 text-sm text-amber-950">
+          <p className="font-semibold">当前 API 下没有工单，左侧「店铺」分组也不会出现</p>
+          <p className="mt-1 text-amber-900/90 leading-relaxed">
+            若刚执行过 <code className="rounded bg-amber-100 px-1 py-0.5 text-xs">db:seed:production</code>，它
+            <strong>只建租户/平台店铺/坐席骨架</strong>，不含工单、订单、售后。要看完整演示数据，请在连接<strong>同一数据库</strong>的机器上执行：
+          </p>
+          <pre className="mt-2 rounded-lg bg-white/80 border border-amber-200 px-3 py-2 text-xs font-mono text-slate-800 overflow-x-auto">
+            cd backend{'\n'}
+            npm run db:seed
+          </pre>
+          <p className="mt-2 text-xs text-amber-800/80">
+            并确认本页能访问后端（另开终端 <code className="rounded bg-amber-100 px-1">cd backend && npm run dev</code>，默认端口 4001），前端 :4000 会通过代理转发请求。
+          </p>
+        </div>
+      ) : null}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        <InboxList
+          tickets={tickets}
+          orders={ordersForList}
+          customers={customersForList}
+          selectedTicketId={ticketId}
+          mailboxSearchSuffix={mailboxSearchSuffix}
+        />
 
-      <div className="flex-1 overflow-hidden">
-        {selectedTicket ? (
-          <TicketDetail
-            ticket={selectedTicket}
-            messages={messagesByTicket[selectedTicket.id] || []}
-            order={selectedTicket.orderId ? MOCK_ORDERS[selectedTicket.orderId] : undefined}
-            customer={MOCK_CUSTOMERS[selectedTicket.customerId]}
-            onSendMessage={handleSendMessage}
-            seatOptions={MAILBOX_SEAT_OPTIONS}
-            assignedSeatId={
-              seatAssignmentByTicket[selectedTicket.id] ?? selectedTicket.assignedSeatId ?? null
-            }
-            onAssignSeat={(seatId) => {
-              setSeatAssignmentByTicket((prev) => {
-                const next = { ...prev };
-                if (!seatId) delete next[selectedTicket.id];
-                else next[selectedTicket.id] = seatId;
-                return next;
-              });
-            }}
-            onUpdateTicket={handleUpdateTicket}
-          />
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-slate-400">
-            <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
-              <MessageSquare className="w-8 h-8" />
+        <div className="flex-1 overflow-hidden relative">
+          {live && (listLoading || detailLoading) ? (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 text-sm text-slate-500">
+              加载中…
             </div>
-            <p className="text-sm font-medium">请选择一个工单查看详情</p>
-          </div>
-        )}
+          ) : null}
+          {selectedTicket ? (
+            <TicketDetail
+              ticket={selectedTicket}
+              messages={messagesByTicket[selectedTicket.id] || []}
+              order={
+                selectedTicket.orderId ? ordersForList[selectedTicket.orderId] : undefined
+              }
+              customer={customersForList[selectedTicket.customerId]}
+              onSendMessage={handleSendMessage}
+              seatOptions={seatOptions}
+              assignedSeatId={
+                seatAssignmentByTicket[selectedTicket.id] ??
+                selectedTicket.assignedSeatId ??
+                null
+              }
+              onAssignSeat={(seatId) => {
+                if (live) {
+                  handleUpdateTicket({ assignedSeatId: seatId ?? undefined });
+                  return;
+                }
+                setSeatAssignmentByTicket((prev) => {
+                  const next = { ...prev };
+                  if (!seatId) delete next[selectedTicket.id];
+                  else next[selectedTicket.id] = seatId;
+                  return next;
+                });
+              }}
+              onUpdateTicket={handleUpdateTicket}
+            />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-slate-400">
+              <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
+                <MessageSquare className="w-8 h-8" />
+              </div>
+              <p className="text-sm font-medium">
+                {live && !listLoading && tickets.length === 0
+                  ? '暂无工单（请确认已 seed 数据库）'
+                  : '请选择一个工单查看详情'}
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

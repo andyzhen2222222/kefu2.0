@@ -29,9 +29,11 @@ import {
   Check,
   Search,
   ThumbsUp,
+  Copy,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/src/lib/utils';
+import { platformGroupLabelForTicket } from '@/src/lib/platformLabels';
 import {
   Ticket,
   TicketStatus,
@@ -46,14 +48,25 @@ import {
 } from '@/src/types';
 import { format } from 'date-fns';
 import { generateReplySuggestion } from '@/src/services/geminiService';
+import { useAuth } from '@/src/hooks/useAuth';
+import {
+  intellideskConfigured,
+  intellideskTenantId,
+  intellideskUserIdForApi,
+  fetchAfterSalesList,
+} from '@/src/services/intellideskApi';
 import InvoicePreviewModal from './InvoicePreviewModal';
 import SubmitAfterSalesModal from './SubmitAfterSalesModal';
 import {
   getTranslationSettings,
   getTicketSubjectForDisplay,
 } from '@/src/components/settings/TranslationSettingsPage';
-import { MOCK_TEMPLATES } from '@/src/data/demoTemplates';
-import { TicketDetailStatusChips } from '@/src/lib/ticketStatusUi';
+import { getActiveReplyTemplatesForPicker } from '@/src/lib/replyTemplatesStore';
+import {
+  TicketDetailStatusChips,
+  TicketConversationStatusSelect,
+  detailHeaderSelectClassName,
+} from '@/src/lib/ticketStatusUi';
 import { appendStoredCitationFeedback } from '@/src/lib/citationFeedbackStore';
 
 const DEFAULT_MAIN_SYSTEM_ORDER_BASE =
@@ -177,6 +190,7 @@ export default function TicketDetail({
   onAssignSeat,
   onUpdateTicket,
 }: TicketDetailProps) {
+  const { user } = useAuth();
   const [replyText, setReplyText] = useState('');
   const [isInternalNote, setIsInternalNote] = useState(false);
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
@@ -197,6 +211,26 @@ export default function TicketDetail({
   const [citationMessageId, setCitationMessageId] = useState<string | null>(null);
   const [citationRecordHint, setCitationRecordHint] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!intellideskConfigured()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await fetchAfterSalesList(
+          intellideskTenantId(),
+          intellideskUserIdForApi(user?.id),
+          { ticketId: ticket.id }
+        );
+        if (!cancelled) setAfterSalesRecords(rows);
+      } catch {
+        if (!cancelled) setAfterSalesRecords([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [ticket.id, user?.id]);
 
   const recordKbCitationFeedback = (
     kind: 'helpful' | 'stale' | 'pending',
@@ -242,6 +276,14 @@ export default function TicketDetail({
     }
   }, [isInternalNote, sendToCustomer, sendToManager]);
 
+  const [copiedOrderId, setCopiedOrderId] = useState(false);
+
+  const handleCopyOrderId = (orderId: string) => {
+    navigator.clipboard.writeText(orderId);
+    setCopiedOrderId(true);
+    setTimeout(() => setCopiedOrderId(false), 2000);
+  };
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -250,14 +292,31 @@ export default function TicketDetail({
     scrollToBottom();
   }, [messages]);
 
-  const internalNotes = useMemo(
-    () =>
-      messages
-        .filter((m) => m.isInternal && m.senderType === 'agent')
-        .slice()
-        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
-    [messages]
-  );
+  const internalNotes = useMemo(() => {
+    const filtered = messages.filter((m) => m.isInternal && m.senderType === 'agent');
+    const byId = new Map<string, Message>();
+    for (const m of filtered) {
+      if (!byId.has(m.id)) byId.set(m.id, m);
+    }
+    return [...byId.values()].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+  }, [messages]);
+
+  const [pickerTemplates, setPickerTemplates] = useState(() => getActiveReplyTemplatesForPicker());
+
+  useEffect(() => {
+    const sync = () => setPickerTemplates(getActiveReplyTemplatesForPicker());
+    window.addEventListener('intellidesk-templates-changed', sync);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'intellidesk.templates.v1' || e.key === null) sync();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('intellidesk-templates-changed', sync);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
 
   const visibleMessages = useMemo(
     () => messages.filter((m) => !m.isInternal),
@@ -299,7 +358,7 @@ export default function TicketDetail({
     
     setIsGeneratingDraft(true);
     try {
-      const suggestion = await generateReplySuggestion(ticket, messages, order);
+      const suggestion = await generateReplySuggestion(ticket, messages, order, user?.id);
       if (suggestion) {
         setReplyText(suggestion);
         setIsReplyExpanded(true);
@@ -311,7 +370,8 @@ export default function TicketDetail({
     }
   };
 
-  const handleSubmitAfterSales = (data: any) => {
+  const handleSubmitAfterSales = (_data: Record<string, unknown>) => {
+    if (intellideskConfigured()) return;
     const newRecord: AfterSalesRecord = {
       id: `AS-${Math.floor(Math.random() * 1000)}`,
       orderId: order?.id || '',
@@ -387,6 +447,7 @@ export default function TicketDetail({
               <TicketDetailStatusChips
                 ticket={ticket}
                 order={order}
+                renderConversationAside={Boolean(onUpdateTicket)}
                 onMessageProcessingStatusChange={
                   onUpdateTicket
                     ? (status) => onUpdateTicket({ messageProcessingStatus: status })
@@ -395,34 +456,54 @@ export default function TicketDetail({
               />
             </div>
 
-            {seatOptions && seatOptions.length > 0 && onAssignSeat && (
-              <div className="flex flex-wrap items-center gap-2 sm:gap-3 shrink-0 lg:pt-1">
-                <div className="flex items-center gap-2 min-w-0">
-                  <label
-                    htmlFor={`assign-seat-${ticket.id}`}
-                    className="text-xs font-medium text-slate-500 whitespace-nowrap hidden lg:inline"
-                  >
-                    分配给坐席
-                  </label>
-                  <div className="relative max-w-[10rem]">
-                    <select
-                      id={`assign-seat-${ticket.id}`}
-                      value={assignSeatValue}
-                      onChange={(e) => onAssignSeat(e.target.value || null)}
-                      className="w-full text-xs font-semibold border border-slate-200 rounded-lg pl-2 pr-8 py-1.5 bg-white text-slate-800 outline-none hover:border-slate-300 focus:ring-2 focus:ring-[#F97316]/25 focus:border-[#F97316] truncate cursor-pointer appearance-none"
-                      title="选择负责跟进的客服坐席"
-                      aria-label="分配给坐席"
+            {((seatOptions && seatOptions.length > 0 && onAssignSeat) || onUpdateTicket) && (
+              <div className="flex flex-col gap-2 shrink-0 w-full sm:w-auto lg:pt-1 lg:items-end">
+                {seatOptions && seatOptions.length > 0 && onAssignSeat && (
+                  <div className="flex items-center gap-2 min-w-0 justify-end w-full sm:w-auto">
+                    <label
+                      htmlFor={`assign-seat-${ticket.id}`}
+                      className="text-xs font-medium text-slate-500 whitespace-nowrap hidden lg:inline"
                     >
-                      <option value="">未分配</option>
-                      {seatOptions.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.label}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                      分配给坐席
+                    </label>
+                    <div className="relative w-full max-w-[8rem] sm:w-[8rem]">
+                      <select
+                        id={`assign-seat-${ticket.id}`}
+                        value={assignSeatValue}
+                        onChange={(e) => onAssignSeat(e.target.value || null)}
+                        className={detailHeaderSelectClassName}
+                        title="选择负责跟进的客服坐席"
+                        aria-label="分配给坐席"
+                      >
+                        <option value="">未分配</option>
+                        {seatOptions.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.label}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                    </div>
                   </div>
-                </div>
+                )}
+                {onUpdateTicket && (
+                  <div className="flex items-center gap-2 min-w-0 justify-end w-full sm:w-auto">
+                    <label
+                      htmlFor={`conv-status-${ticket.id}`}
+                      className="text-xs font-medium text-slate-500 whitespace-nowrap hidden lg:inline"
+                    >
+                      会话状态
+                    </label>
+                    <div className="w-full max-w-[8rem] sm:w-[8rem] min-w-0">
+                      <TicketConversationStatusSelect
+                        selectId={`conv-status-${ticket.id}`}
+                        ticket={ticket}
+                        onChange={(status) => onUpdateTicket({ messageProcessingStatus: status })}
+                        className="w-full"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -630,11 +711,13 @@ export default function TicketDetail({
                           </div>
                         </div>
                         <div className="max-h-[280px] overflow-y-auto p-2 space-y-1">
-                          {MOCK_TEMPLATES.filter(
-                            (tpl) =>
-                              tpl.title.toLowerCase().includes(templateSearchQuery.toLowerCase()) ||
-                              tpl.content.toLowerCase().includes(templateSearchQuery.toLowerCase())
-                          ).map((tpl) => (
+                          {pickerTemplates
+                            .filter(
+                              (tpl) =>
+                                tpl.title.toLowerCase().includes(templateSearchQuery.toLowerCase()) ||
+                                tpl.content.toLowerCase().includes(templateSearchQuery.toLowerCase())
+                            )
+                            .map((tpl) => (
                             <button
                               key={tpl.id}
                               type="button"
@@ -658,7 +741,7 @@ export default function TicketDetail({
                               </p>
                             </button>
                           ))}
-                          {MOCK_TEMPLATES.filter(
+                          {pickerTemplates.filter(
                             (tpl) =>
                               tpl.title.toLowerCase().includes(templateSearchQuery.toLowerCase()) ||
                               tpl.content.toLowerCase().includes(templateSearchQuery.toLowerCase())
@@ -873,8 +956,13 @@ export default function TicketDetail({
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-bold text-slate-900 truncate">{customer.name}</p>
-                    <p className="text-xs text-slate-500 truncate flex items-center gap-1">
-                      渠道: <span className="font-medium text-slate-700">{ticket.channelId}</span>
+                    <p className="text-xs text-slate-500 truncate">
+                      平台{' '}
+                      <span className="font-medium text-slate-700">
+                        {platformGroupLabelForTicket(ticket.platformType, ticket.channelId)}
+                      </span>
+                      <span className="mx-1">·</span>
+                      店铺 <span className="font-medium text-slate-700">{ticket.channelId}</span>
                     </p>
                   </div>
                 </div>
@@ -900,9 +988,18 @@ export default function TicketDetail({
                   {order ? (
                     <>
                       <div className="flex items-center justify-between">
-                        <div className="space-y-1">
+                        <div className="space-y-1 group">
                           <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">订单号</p>
-                          <p className="text-sm font-medium text-blue-600 hover:underline cursor-pointer">{order.platformOrderId}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-blue-600 hover:underline cursor-pointer">{order.platformOrderId}</p>
+                            <button
+                              onClick={() => handleCopyOrderId(order.platformOrderId)}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-slate-400 hover:text-blue-600 rounded"
+                              title="复制订单号"
+                            >
+                              {copiedOrderId ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
                         </div>
                         <span className={cn(
                           "text-[10px] px-2 py-0.5 rounded-md font-bold border",
@@ -912,7 +1009,7 @@ export default function TicketDetail({
                           order.orderStatus === 'partial_refund' ? "bg-orange-50 text-orange-600 border-orange-200" :
                           "bg-slate-50 text-slate-600 border-slate-200"
                         )}>
-                          {order.orderStatus === 'unshipped' ? '待发货' :
+                          {order.orderStatus === 'unshipped' ? '未发货' :
                            order.orderStatus === 'shipped' ? '已发货' :
                            order.orderStatus === 'refunded' ? '已退款' :
                            order.orderStatus === 'partial_refund' ? '部分退款' : '未知状态'}
@@ -1385,11 +1482,28 @@ export default function TicketDetail({
       )}
 
       {/* Submit After-sales Modal */}
-      <SubmitAfterSalesModal 
+      <SubmitAfterSalesModal
         isOpen={isAfterSalesModalOpen}
         onClose={() => setIsAfterSalesModalOpen(false)}
         order={order}
         onSubmit={handleSubmitAfterSales}
+        apiSubmit={
+          intellideskConfigured()
+            ? {
+                tenantId: intellideskTenantId(),
+                userId: intellideskUserIdForApi(user?.id),
+                defaultTicketId: ticket.id,
+                onSuccess: async () => {
+                  const rows = await fetchAfterSalesList(
+                    intellideskTenantId(),
+                    intellideskUserIdForApi(user?.id),
+                    { ticketId: ticket.id }
+                  );
+                  setAfterSalesRecords(rows);
+                },
+              }
+            : undefined
+        }
       />
 
       {/* Invoice Preview Modal */}

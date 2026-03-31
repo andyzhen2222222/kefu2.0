@@ -27,6 +27,16 @@ import { useState, useEffect, useMemo } from 'react';
 import { cn } from '@/src/lib/utils';
 import { useAuth } from '@/src/hooks/useAuth';
 import { summarizeTicket } from '@/src/services/geminiService';
+import {
+  intellideskConfigured,
+  intellideskTenantId,
+  intellideskUserIdForApi,
+  fetchDashboardInboxMetrics,
+  fetchDashboardStructure,
+  fetchDashboardTrends,
+  type DashboardInboxMetrics,
+  type StructureBucket,
+} from '@/src/services/intellideskApi';
 import { Link } from 'react-router-dom';
 import OnlineSeatsModal from './OnlineSeatsModal';
 import { DEMO_AGENT_SEATS_INITIAL, DEMO_SEAT_ONLINE_BY_ID } from '@/src/data/demoAgentSeats';
@@ -94,27 +104,56 @@ const INBOX_METRICS: {
 /** 与 UI 副标题、接口文档对齐的环比时间基准说明 */
 const INBOX_METRICS_PERIOD_LABEL = '较昨日同时段';
 
-const AFTER_SALES_TYPE_DIST = [
-  { name: '退款/售后', value: 32, fill: '#9333EA' },
-  { name: '物流查询', value: 24, fill: '#F97316' },
-  { name: '发票/凭证', value: 18, fill: '#3B82F6' },
-  { name: '修改地址', value: 12, fill: '#10B981' },
-  { name: '其他', value: 14, fill: '#94A3B8' },
+type DistSlice = { name: string; value: number; fill: string; count?: number };
+
+const PIE_PALETTE = ['#9333EA', '#F97316', '#3B82F6', '#10B981', '#94A3B8', '#64748B', '#DC2626', '#EA580C'];
+
+function formatPercentForLabel(p: number): string {
+  const r = Math.round(p * 10) / 10;
+  return Number.isInteger(r) ? String(r) : r.toFixed(1);
+}
+
+/** 列表/提示：统计数 + 占比，如 8 (20%) */
+function formatCountWithPercent(count: number, percent: number): string {
+  return `${count} (${formatPercentForLabel(percent)}%)`;
+}
+
+function structureBucketToPie(data: StructureBucket): DistSlice[] {
+  return Object.entries(data).map(([name, v], i) => ({
+    name,
+    value: v.percent,
+    count: v.count,
+    fill: PIE_PALETTE[i % PIE_PALETTE.length],
+  }));
+}
+
+function formatInboxChangePct(pct: number | null): { text: string; trend: 'up' | 'down' } {
+  if (pct === null) return { text: '—', trend: 'up' };
+  const sign = pct > 0 ? '+' : '';
+  return { text: `${sign}${pct}%`, trend: pct >= 0 ? 'up' : 'down' };
+}
+
+const AFTER_SALES_TYPE_DIST: DistSlice[] = [
+  { name: '退款/售后', value: 32, count: 32, fill: '#9333EA' },
+  { name: '物流查询', value: 24, count: 24, fill: '#F97316' },
+  { name: '发票/凭证', value: 18, count: 18, fill: '#3B82F6' },
+  { name: '修改地址', value: 12, count: 12, fill: '#10B981' },
+  { name: '其他', value: 14, count: 14, fill: '#94A3B8' },
 ];
 
 /** 买家侧情绪（与工单 sentiment 一致）；标题沿用产品常用「用户情绪」 */
-const BUYER_SENTIMENT_DIST = [
-  { name: '平静中性', value: 45, fill: '#64748B' },
-  { name: '愤怒抱怨', value: 22, fill: '#DC2626' },
-  { name: '焦急催促', value: 20, fill: '#EA580C' },
-  { name: '开心满意', value: 13, fill: '#16A34A' },
+const BUYER_SENTIMENT_DIST: DistSlice[] = [
+  { name: '平静中性', value: 45, count: 45, fill: '#64748B' },
+  { name: '愤怒抱怨', value: 22, count: 22, fill: '#DC2626' },
+  { name: '焦急催促', value: 20, count: 20, fill: '#EA580C' },
+  { name: '开心满意', value: 13, count: 13, fill: '#16A34A' },
 ];
 
-const ORDER_STATUS_DIST = [
-  { name: '已发货', value: 40, fill: '#2563EB' },
-  { name: '未发货', value: 28, fill: '#64748B' },
-  { name: '已退款', value: 22, fill: '#7C3AED' },
-  { name: '部分退款', value: 10, fill: '#A855F7' },
+const ORDER_STATUS_DIST: DistSlice[] = [
+  { name: '已发货', value: 40, count: 40, fill: '#2563EB' },
+  { name: '未发货', value: 28, count: 28, fill: '#64748B' },
+  { name: '已退款', value: 22, count: 22, fill: '#7C3AED' },
+  { name: '部分退款', value: 10, count: 10, fill: '#A855F7' },
 ];
 
 /** 工作台使用引导：按顺序完成基础配置（仅数字序号，无图标） */
@@ -122,7 +161,7 @@ const USAGE_NAV: { step: number; title: string; desc: string; path: string }[] =
   {
     step: 1,
     title: '绑定店铺',
-    desc: '接入各平台店铺与渠道，同步订单与买家消息',
+    desc: '接入各平台下的店铺，同步订单与买家消息',
     path: '/settings',
   },
   {
@@ -155,8 +194,6 @@ const MOCK_CHART_DATA = [
   { name: '周日', tickets: 70, resolved: 75 },
 ];
 
-type DistSlice = { name: string; value: number; fill: string };
-
 function DistributionPieCard({
   title,
   subtitle,
@@ -172,48 +209,61 @@ function DistributionPieCard({
         <h3 className="text-lg font-bold text-slate-900">{title}</h3>
         {subtitle ? <p className="text-xs text-slate-500 mt-1">{subtitle}</p> : null}
       </div>
-      <div className="flex-1 min-h-[220px] w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={data}
-              dataKey="value"
-              nameKey="name"
-              cx="50%"
-              cy="50%"
-              innerRadius={48}
-              outerRadius={72}
-              paddingAngle={2}
-            >
-              {data.map((entry) => (
-                <Cell key={entry.name} fill={entry.fill} stroke="transparent" />
-              ))}
-            </Pie>
-            <Tooltip
-              formatter={(value: number) => [`${value}%`, '占比']}
-              contentStyle={{
-                borderRadius: '12px',
-                border: 'none',
-                boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-              }}
-            />
-          </PieChart>
-        </ResponsiveContainer>
-      </div>
-      <ul className="mt-2 space-y-2 border-t border-slate-100 pt-4">
-        {data.map((row) => (
-          <li key={row.name} className="flex items-center justify-between text-sm">
-            <span className="flex items-center gap-2 text-slate-600 min-w-0">
-              <span
-                className="w-2.5 h-2.5 rounded-full shrink-0"
-                style={{ backgroundColor: row.fill }}
+      <div className="flex-1 min-h-[220px] w-full flex flex-col">
+        <div className="h-[220px] w-full shrink-0">
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={data}
+                dataKey="value"
+                nameKey="name"
+                cx="50%"
+                cy="50%"
+                innerRadius={48}
+                outerRadius={72}
+                paddingAngle={2}
+              >
+                {data.map((entry) => (
+                  <Cell key={entry.name} fill={entry.fill} stroke="transparent" />
+                ))}
+              </Pie>
+              <Tooltip
+                formatter={(value: number, _name: string, item: { payload?: DistSlice }) => {
+                  const p = item?.payload;
+                  const label =
+                    p?.count != null ? formatCountWithPercent(p.count, value) : `${formatPercentForLabel(value)}%`;
+                  return [label, '占比'];
+                }}
+                contentStyle={{
+                  borderRadius: '12px',
+                  border: 'none',
+                  boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
+                }}
               />
-              <span className="truncate">{row.name}</span>
-            </span>
-            <span className="font-semibold text-slate-900 tabular-nums shrink-0 ml-2">{row.value}%</span>
-          </li>
-        ))}
-      </ul>
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="mt-2 border-t border-slate-100 pt-4 flex-1">
+          <ul className="space-y-2 max-h-[160px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-slate-200 hover:scrollbar-thumb-slate-300">
+            {data.map((row) => (
+              <li key={row.name} className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2 text-slate-600 min-w-0">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: row.fill }}
+                  />
+                  <span className="truncate">{row.name}</span>
+                </span>
+                <span className="font-semibold text-slate-900 tabular-nums shrink-0 ml-2">
+                  {row.count != null
+                    ? formatCountWithPercent(row.count, row.value)
+                    : `${formatPercentForLabel(row.value)}%`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
     </div>
   );
 }
@@ -227,9 +277,25 @@ function seatInitials(name: string): string {
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const liveDash = intellideskConfigured();
+  const tenantId = intellideskTenantId();
+  const apiUserId = intellideskUserIdForApi(user?.id);
   const [aiInsight, setAiInsight] = useState<string | null>(null);
   const [isGeneratingInsight, setIsGeneratingInsight] = useState(false);
   const [onlineSeatsOpen, setOnlineSeatsOpen] = useState(false);
+  const [apiMetrics, setApiMetrics] = useState<DashboardInboxMetrics | null>(null);
+  const [apiStructure, setApiStructure] = useState<{
+    afterSalesIntent: StructureBucket;
+    sentiment: StructureBucket;
+    orderStatus: StructureBucket;
+    channels?: StructureBucket;
+  } | null>(null);
+  const [trendRange, setTrendRange] = useState<'7d' | '30d'>('7d');
+  const [trendSeries, setTrendSeries] = useState<{ name: string; tickets: number; resolved: number }[]>(
+    []
+  );
+  const [dashLoading, setDashLoading] = useState(false);
+  const [dashError, setDashError] = useState<string | null>(null);
 
   const onlineSeatPreview = useMemo(() => {
     const online = DEMO_AGENT_SEATS_INITIAL.filter(
@@ -241,23 +307,144 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    if (!liveDash) return;
+    let cancelled = false;
+    setDashError(null);
+    void (async () => {
+      try {
+        setDashLoading(true);
+        const [m, s, t] = await Promise.all([
+          fetchDashboardInboxMetrics(tenantId, apiUserId),
+          fetchDashboardStructure(tenantId, apiUserId),
+          fetchDashboardTrends(tenantId, apiUserId, trendRange),
+        ]);
+        if (cancelled) return;
+        setApiMetrics(m);
+        setApiStructure(s);
+        setTrendSeries(t.series);
+      } catch (e) {
+        if (!cancelled) setDashError(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setDashLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [liveDash, tenantId, apiUserId, trendRange]);
+
+  const inboxStatCards = useMemo(() => {
+    if (!liveDash || !apiMetrics) return INBOX_METRICS;
+    const m = apiMetrics;
+    const row = (
+      key: keyof DashboardInboxMetrics,
+      title: string,
+      icon: LucideIcon,
+      color: string,
+      bg: string,
+      link: string
+    ) => {
+      const card = m[key];
+      const { text, trend } = formatInboxChangePct(card.changePercent);
+      return {
+        title,
+        value: String(card.current),
+        change: text,
+        trend,
+        icon,
+        color,
+        bg,
+        link,
+      };
+    };
+    return [
+      row('unread', '未读', MessageSquare, 'text-orange-600', 'bg-orange-50', '/mailbox?filter=unread'),
+      row('unreplied', '已读未回复', Users, 'text-emerald-600', 'bg-emerald-50', '/mailbox?filter=unreplied'),
+      row('replied', '已回复', CheckCircle2, 'text-blue-600', 'bg-blue-50', '/mailbox?filter=replied'),
+      row('slaOverdue', '超时', AlertCircle, 'text-red-600', 'bg-red-50', '/mailbox?filter=sla_overdue'),
+    ];
+  }, [liveDash, apiMetrics]);
+
+  const intentPie = useMemo(
+    () =>
+      liveDash && apiStructure
+        ? structureBucketToPie(apiStructure.afterSalesIntent)
+        : AFTER_SALES_TYPE_DIST,
+    [liveDash, apiStructure]
+  );
+  const sentimentPie = useMemo(
+    () =>
+      liveDash && apiStructure ? structureBucketToPie(apiStructure.sentiment) : BUYER_SENTIMENT_DIST,
+    [liveDash, apiStructure]
+  );
+  const orderStatusPie = useMemo(
+    () =>
+      liveDash && apiStructure ? structureBucketToPie(apiStructure.orderStatus) : ORDER_STATUS_DIST,
+    [liveDash, apiStructure]
+  );
+
+  const channelBars = useMemo(() => {
+    const fallback = [
+      { name: 'Amazon', value: 45, count: 45, color: 'bg-[#F97316]' },
+      { name: 'eBay', value: 25, count: 25, color: 'bg-[#9333EA]' },
+      { name: 'Shopify', value: 20, count: 20, color: 'bg-blue-500' },
+      { name: 'Walmart', value: 10, count: 10, color: 'bg-emerald-500' },
+    ];
+    if (!liveDash) return fallback;
+    const ch = apiStructure?.channels;
+    if (!ch || Object.keys(ch).length === 0) return [];
+    const colors = ['bg-[#F97316]', 'bg-[#9333EA]', 'bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-slate-500'];
+    return Object.entries(ch)
+      .map(([name, v], i) => ({
+        name,
+        value: Math.round(v.percent * 10) / 10,
+        count: v.count,
+        color: colors[i % colors.length],
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [liveDash, apiStructure]);
+
+  const chartData = useMemo(
+    () => (liveDash && trendSeries.length > 0 ? trendSeries : MOCK_CHART_DATA),
+    [liveDash, trendSeries]
+  );
+
+  useEffect(() => {
     const generateInsight = async () => {
       setIsGeneratingInsight(true);
-      // Simulate generating insight based on dashboard data
+      const statsLine =
+        liveDash && apiMetrics
+          ? `未读 ${apiMetrics.unread.current}、已读未回复 ${apiMetrics.unreplied.current}、已回复 ${apiMetrics.replied.current}、SLA超时 ${apiMetrics.slaOverdue.current}。`
+          : 'Dashboard Stats: Total Tickets: 1284 (+12.5%), Avg Response Time: 1h 24m (-18.4%), SLA: 98.2%.';
       const mockConversation = [
-        { role: 'system', content: `Dashboard Stats: Total Tickets: 1284 (+12.5%), Avg Response Time: 1h 24m (-18.4%), SLA: 98.2%.` },
-        { role: 'user', content: 'Provide a 2-sentence summary of our current performance and one actionable recommendation in Chinese.' }
+        { role: 'system' as const, content: statsLine },
+        {
+          role: 'user' as const,
+          content:
+            'Provide a 2-sentence summary of our current performance and one actionable recommendation in Chinese.',
+        },
       ];
       const summary = await summarizeTicket(mockConversation);
       setAiInsight(summary);
       setIsGeneratingInsight(false);
     };
 
-    generateInsight();
-  }, []);
+    void generateInsight();
+  }, [liveDash, apiMetrics]);
 
   return (
     <div className="p-8 space-y-8 bg-slate-50/50 min-h-full">
+      {dashError ? (
+        <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-800">
+          {dashError}
+        </div>
+      ) : null}
+      {liveDash && dashLoading ? (
+        <div className="flex items-center gap-2 text-sm text-slate-500">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          正在同步仪表盘数据…
+        </div>
+      ) : null}
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">欢迎回来, {user?.name.split(' ')[0]}!</h1>
@@ -370,7 +557,7 @@ export default function DashboardPage() {
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {INBOX_METRICS.map((stat) => (
+        {inboxStatCards.map((stat) => (
           <div
             key={stat.title}
             className="bg-white rounded-[24px] shadow-sm border border-slate-100 hover:shadow-md transition-all group flex flex-col"
@@ -408,17 +595,25 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 业务结构分布（Mock，后续对接统计接口） */}
+      {/* 业务结构分布（在线模式由 /api/dashboard/structure 提供） */}
       <div>
         <h3 className="text-lg font-bold text-slate-900 mb-4">业务结构分布</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          <DistributionPieCard title="售后类型分布" subtitle="按 AI / 工单标注的售后类型聚合" data={AFTER_SALES_TYPE_DIST} />
+          <DistributionPieCard
+            title="工单意图分布"
+            subtitle="按工单 intent 字段聚合（未填写计入「未分类」）"
+            data={intentPie}
+          />
           <DistributionPieCard
             title="用户情绪分布"
             subtitle="买家消息情绪识别（与收件箱情绪标签一致）"
-            data={BUYER_SENTIMENT_DIST}
+            data={sentimentPie}
           />
-          <DistributionPieCard title="订单状态分布" subtitle="关联订单：发货 / 退款等状态占比" data={ORDER_STATUS_DIST} />
+          <DistributionPieCard
+            title="订单状态分布"
+            subtitle="关联订单状态以中文展示（含无关联订单等）"
+            data={orderStatusPie}
+          />
         </div>
       </div>
 
@@ -427,15 +622,20 @@ export default function DashboardPage() {
         <div className="lg:col-span-2 bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-bold text-slate-900">工单处理趋势</h3>
-            <select className="bg-slate-50 border-none text-xs font-medium rounded-lg px-3 py-1.5 outline-none text-slate-600">
-              <option>最近 7 天</option>
-              <option>最近 30 天</option>
+            <select
+              className="bg-slate-50 border-none text-xs font-medium rounded-lg px-3 py-1.5 outline-none text-slate-600"
+              value={trendRange}
+              onChange={(e) => setTrendRange(e.target.value === '30d' ? '30d' : '7d')}
+              disabled={!liveDash}
+            >
+              <option value="7d">最近 7 天</option>
+              <option value="30d">最近 30 天</option>
             </select>
           </div>
           
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={MOCK_CHART_DATA}>
+              <AreaChart data={chartData}>
                 <defs>
                   <linearGradient id="colorTickets" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#F97316" stopOpacity={0.2}/>
@@ -472,30 +672,26 @@ export default function DashboardPage() {
         </div>
         
         <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 space-y-6">
-          <h3 className="text-lg font-bold text-slate-900">渠道分布</h3>
+          <h3 className="text-lg font-bold text-slate-900">平台分布</h3>
           <div className="space-y-5">
-            {[
-              { name: 'Amazon US', value: 45, color: 'bg-[#F97316]' },
-              { name: 'eBay UK', value: 25, color: 'bg-[#9333EA]' },
-              { name: 'Shopify Store', value: 20, color: 'bg-blue-500' },
-              { name: 'Walmart', value: 10, color: 'bg-emerald-500' },
-            ].map(channel => (
+            {channelBars.length === 0 ? (
+              <p className="text-sm text-slate-500 py-4 text-center">
+                {liveDash ? '暂无工单平台数据' : '演示数据'}
+              </p>
+            ) : null}
+            {channelBars.map((channel) => (
               <div key={channel.name} className="space-y-2">
-                <div className="flex justify-between text-sm">
+                <div className="flex justify-between text-sm gap-2">
                   <span className="font-medium text-slate-700">{channel.name}</span>
-                  <span className="font-bold text-slate-900">{channel.value}%</span>
+                  <span className="font-bold text-slate-900 tabular-nums shrink-0">
+                    {formatCountWithPercent(channel.count, channel.value)}
+                  </span>
                 </div>
                 <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div className={cn("h-full rounded-full", channel.color)} style={{ width: `${channel.value}%` }} />
+                  <div className={cn('h-full rounded-full', channel.color)} style={{ width: `${channel.value}%` }} />
                 </div>
               </div>
             ))}
-          </div>
-          
-          <div className="pt-6 border-t border-slate-50">
-            <Link to="/settings" className="block w-full text-center py-2.5 text-[#F97316] text-sm font-bold hover:bg-orange-50 rounded-xl transition-all">
-              管理渠道
-            </Link>
           </div>
         </div>
       </div>

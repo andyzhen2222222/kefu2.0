@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { Plus, Trash2, Edit2, Shield, UserCog, GitBranch, Check, X } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
@@ -7,6 +7,14 @@ import { useAuth } from '@/src/hooks/useAuth';
 import TicketRoutingRulesBlock from './TicketRoutingRulesBlock';
 import { getDefaultSettingsPath } from './settingsNavConfig';
 import { DEMO_AGENT_SEATS_INITIAL } from '@/src/data/demoAgentSeats';
+import {
+  intellideskConfigured,
+  intellideskTenantId,
+  intellideskUserIdForApi,
+  fetchAgentSeats,
+  createAgentSeat,
+  deleteAgentSeat,
+} from '@/src/services/intellideskApi';
 
 const PERMISSION_PRESETS: { key: string; label: string }[] = [
   { key: 'inbox.view', label: '收件箱查看' },
@@ -68,10 +76,46 @@ export default function SeatsAndRolesPage() {
     roleId: INITIAL_ROLES[0]?.id || '',
     status: 'active' as 'active' | 'inactive',
   });
+  const [settingsApiError, setSettingsApiError] = useState<string | null>(null);
+
+  const reloadSeats = useCallback(async () => {
+    if (!intellideskConfigured()) return;
+    try {
+      const rows = await fetchAgentSeats(
+        intellideskTenantId(),
+        intellideskUserIdForApi(user?.id)
+      );
+      setSeats(
+        rows.map((r) => ({
+          id: r.id,
+          displayName: r.displayName,
+          email: r.email,
+          account: r.account,
+          roleId: r.roleId,
+          status: r.status,
+        }))
+      );
+      setSettingsApiError(null);
+    } catch (e) {
+      setSettingsApiError(e instanceof Error ? e.message : String(e));
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    void reloadSeats();
+  }, [reloadSeats]);
 
   const seatOptions = useMemo(
     () => seats.filter((s) => s.status === 'active').map((s) => ({ id: s.id, label: s.displayName })),
     [seats]
+  );
+
+  const routingApi = useMemo(
+    () =>
+      intellideskConfigured()
+        ? { tenantId: intellideskTenantId(), userId: intellideskUserIdForApi(user?.id) }
+        : undefined,
+    [user?.id]
   );
 
   if (user?.role !== 'admin') {
@@ -154,13 +198,30 @@ export default function SeatsAndRolesPage() {
   };
 
   const saveSeat = () => {
-    if (
-      !seatForm.displayName.trim() ||
-      !seatForm.email.trim() ||
-      !seatForm.account.trim() ||
-      !seatForm.password.trim()
-    ) {
-      window.alert('请填写显示名称、邮箱、登录账号与登录密码。');
+    if (!seatForm.displayName.trim() || !seatForm.email.trim() || !seatForm.account.trim()) {
+      window.alert('请填写显示名称、邮箱、登录账号。');
+      return;
+    }
+    if (!intellideskConfigured() && !seatForm.password.trim()) {
+      window.alert('演示模式下请同时填写登录密码。');
+      return;
+    }
+    if (intellideskConfigured()) {
+      void (async () => {
+        try {
+          await createAgentSeat(intellideskTenantId(), intellideskUserIdForApi(user?.id), {
+            displayName: seatForm.displayName.trim(),
+            email: seatForm.email.trim(),
+            account: seatForm.account.trim(),
+            roleId: seatForm.roleId?.trim() || 'default',
+            status: seatForm.status,
+          });
+          await reloadSeats();
+          setSeatModalOpen(false);
+        } catch (e) {
+          window.alert(e instanceof Error ? e.message : String(e));
+        }
+      })();
       return;
     }
     setSeats((prev) => [
@@ -180,6 +241,17 @@ export default function SeatsAndRolesPage() {
 
   const deleteSeat = (id: string) => {
     if (!window.confirm('确定移除该坐席？相关分配规则需手动调整。')) return;
+    if (intellideskConfigured()) {
+      void (async () => {
+        try {
+          await deleteAgentSeat(intellideskTenantId(), intellideskUserIdForApi(user?.id), id);
+          await reloadSeats();
+        } catch (e) {
+          window.alert(e instanceof Error ? e.message : String(e));
+        }
+      })();
+      return;
+    }
     setSeats((prev) => prev.filter((s) => s.id !== id));
   };
 
@@ -189,6 +261,11 @@ export default function SeatsAndRolesPage() {
     <div className="flex-1 overflow-y-auto bg-slate-50 p-8">
       <div className="max-w-6xl mx-auto space-y-6">
         <div>
+          {settingsApiError ? (
+            <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-2 text-sm text-amber-900">
+              坐席同步 API：{settingsApiError}
+            </div>
+          ) : null}
           <h1 className="text-2xl font-bold text-slate-900">坐席与分配</h1>
           <p className="text-sm text-slate-500 mt-1">
             按步骤完成：角色 → 坐席（含登录账号与密码）→ 工单自动分配规则。本页仅
@@ -411,7 +488,11 @@ export default function SeatsAndRolesPage() {
               </button>
             </div>
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8">
-              <TicketRoutingRulesBlock seatOptions={seatOptions} seatsStepHref="/settings/seats?step=2" />
+              <TicketRoutingRulesBlock
+                seatOptions={seatOptions}
+                seatsStepHref="/settings/seats?step=2"
+                routingApi={routingApi}
+              />
             </div>
           </div>
         )}

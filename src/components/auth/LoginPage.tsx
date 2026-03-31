@@ -7,6 +7,8 @@ export default function LoginPage() {
   const { signIn } = useAuth();
   const [loginMethod, setLoginMethod] = useState<'password' | 'code' | 'qr'>('password');
 
+  const [loginAccount, setLoginAccount] = useState('');
+
   return (
     <div className="flex min-h-screen bg-slate-50 font-sans">
       {/* Left side - Value Proposition */}
@@ -96,7 +98,9 @@ export default function LoginPage() {
                     <Smartphone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                     <input 
                       type="text" 
-                      placeholder="请输入账号或手机号"
+                      value={loginAccount}
+                      onChange={(e) => setLoginAccount(e.target.value)}
+                      placeholder="请输入账号或手机号（输入包含 agent 可测试客服角色）"
                       className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 focus:bg-white focus:border-orange-500 focus:ring-2 focus:ring-orange-200 rounded-xl text-sm transition-all outline-none"
                     />
                   </div>
@@ -167,7 +171,7 @@ export default function LoginPage() {
             </div>
             
             <button 
-              onClick={signIn}
+              onClick={() => signIn(loginAccount)}
               className="w-full py-3.5 bg-[#F97316] text-white rounded-xl font-bold shadow-lg shadow-orange-500/30 hover:bg-orange-600 transition-all active:scale-95"
             >
               登录

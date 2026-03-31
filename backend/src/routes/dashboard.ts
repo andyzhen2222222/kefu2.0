@@ -5,6 +5,40 @@ import type { TenantRequest } from '../middleware/tenant.js';
 
 const router = Router();
 
+const SENTIMENT_ZH: Record<string, string> = {
+  angry: '愤怒抱怨',
+  anxious: '焦急催促',
+  neutral: '平静中性',
+  joyful: '开心满意',
+};
+
+function sentimentZh(raw: string): string {
+  const k = (raw || 'neutral').toLowerCase();
+  return SENTIMENT_ZH[k] ?? '平静中性';
+}
+
+const ORDER_STATUS_ZH: Record<string, string> = {
+  unshipped: '未发货',
+  shipped: '已发货',
+  refunded: '已退款',
+  partial_refund: '部分退款',
+  unknown: '未知',
+  no_order: '无关联订单',
+};
+
+function orderStatusZh(raw: string): string {
+  return ORDER_STATUS_ZH[raw] ?? raw;
+}
+
+function platformLabelFromChannel(platformType: string | null | undefined): string {
+  const p = (platformType || '').toUpperCase();
+  if (p === 'AMAZON') return 'Amazon';
+  if (p === 'EBAY') return 'eBay';
+  if (p === 'SHOPIFY') return 'Shopify';
+  if (p === 'WALMART') return 'Walmart';
+  return '其他';
+}
+
 function startOfDay(d: Date) {
   const x = new Date(d);
   x.setHours(0, 0, 0, 0);
@@ -43,7 +77,7 @@ router.get('/inbox-metrics', async (req: TenantRequest, res) => {
   const cutoffYesterday = addMs(y0, elapsed);
 
   const unreadWhere = {
-    OR: [{ messageProcessingStatus: 'unread' }, { status: TicketStatus.new }],
+    OR: [{ messageProcessingStatus: 'unread' }, { status: TicketStatus['new'] }],
   };
   const unrepliedWhere = { messageProcessingStatus: 'unreplied' };
   const repliedWhere = { messageProcessingStatus: 'replied' };
@@ -55,10 +89,16 @@ router.get('/inbox-metrics', async (req: TenantRequest, res) => {
   });
 
   const [curU, curUr, curR, curO, prevU, prevUr, prevR, prevO] = await Promise.all([
-    prisma.ticket.count({ where: { tenantId, ...unreadWhere } } }),
-    prisma.ticket.count({ where: { tenantId, ...unrepliedWhere } } }),
-    prisma.ticket.count({ where: { tenantId, ...repliedWhere } } }),
-    prisma.ticket.count({ where: { tenantId, ...overdueWhereNow } } }),
+    prisma.ticket.count({ where: { tenantId, OR: unreadWhere.OR } }),
+    prisma.ticket.count({ where: { tenantId, messageProcessingStatus: 'unreplied' } }),
+    prisma.ticket.count({ where: { tenantId, messageProcessingStatus: 'replied' } }),
+    prisma.ticket.count({
+      where: {
+        tenantId,
+        status: { not: TicketStatus.resolved },
+        slaDueAt: { lt: now },
+      },
+    }),
     snapshotCount(tenantId, unreadWhere, cutoffYesterday),
     snapshotCount(tenantId, unrepliedWhere, cutoffYesterday),
     snapshotCount(tenantId, repliedWhere, cutoffYesterday),
@@ -84,7 +124,12 @@ router.get('/structure', async (req: TenantRequest, res) => {
   const tenantId = req.tenantId!;
   const tickets = await prisma.ticket.findMany({
     where: { tenantId },
-    select: { intent: true, sentiment: true, orderId: true },
+    select: {
+      intent: true,
+      sentiment: true,
+      orderId: true,
+      channel: { select: { displayName: true, platformType: true } },
+    },
   });
   const orders = await prisma.order.findMany({
     where: { tenantId },
@@ -95,14 +140,18 @@ router.get('/structure', async (req: TenantRequest, res) => {
   const intentBuckets: Record<string, number> = {};
   const sentimentBuckets: Record<string, number> = {};
   const orderStatusBuckets: Record<string, number> = {};
+  const channelBuckets: Record<string, number> = {};
 
   for (const t of tickets) {
     const ik = t.intent?.trim() || '未分类';
     intentBuckets[ik] = (intentBuckets[ik] ?? 0) + 1;
-    const sk = t.sentiment || 'neutral';
+    const sk = sentimentZh(t.sentiment || 'neutral');
     sentimentBuckets[sk] = (sentimentBuckets[sk] ?? 0) + 1;
-    const ok = t.orderId ? orderMap.get(t.orderId) ?? 'unknown' : 'no_order';
+    const okRaw = t.orderId ? orderMap.get(t.orderId) ?? 'unknown' : 'no_order';
+    const ok = orderStatusZh(okRaw);
     orderStatusBuckets[ok] = (orderStatusBuckets[ok] ?? 0) + 1;
+    const ck = platformLabelFromChannel(t.channel?.platformType);
+    channelBuckets[ck] = (channelBuckets[ck] ?? 0) + 1;
   }
 
   const toPct = (o: Record<string, number>) => {
@@ -116,6 +165,7 @@ router.get('/structure', async (req: TenantRequest, res) => {
     afterSalesIntent: toPct(intentBuckets),
     sentiment: toPct(sentimentBuckets),
     orderStatus: toPct(orderStatusBuckets),
+    channels: toPct(channelBuckets),
   });
 });
 

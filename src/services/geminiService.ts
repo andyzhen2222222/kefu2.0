@@ -1,5 +1,11 @@
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import { AfterSalesType, Ticket, Message, Order } from "../types";
+import {
+  intellideskConfigured,
+  intellideskTenantId,
+  intellideskUserIdForApi,
+  postAiSuggestReply,
+} from "./intellideskApi";
 
 /** 与提交售后表单「售后类型」下拉 value 一致 */
 export type AfterSalesCategoryValue =
@@ -118,8 +124,21 @@ export async function getAISuggestion(
 export async function generateReplySuggestion(
   ticket: Ticket,
   messages: Message[],
-  order?: Order
+  order?: Order,
+  authUserId?: string | null
 ): Promise<string | null> {
+  if (intellideskConfigured()) {
+    try {
+      const tenantId = intellideskTenantId();
+      const userId = intellideskUserIdForApi(authUserId);
+      const { suggestion } = await postAiSuggestReply(tenantId, userId, ticket.id);
+      return suggestion?.trim() || null;
+    } catch (error) {
+      console.error("AI Reply Suggestion Error (API):", error);
+      return null;
+    }
+  }
+
   try {
     const prompt = `
       You are an intelligent customer service assistant. Generate a professional, helpful, and concise reply to the customer based on the following context.

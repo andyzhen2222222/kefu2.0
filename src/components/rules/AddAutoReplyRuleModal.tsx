@@ -1,12 +1,21 @@
 import { X, MessageSquare, Clock, Tag, Search } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { cn } from '@/src/lib/utils';
 import { MOCK_TEMPLATES } from '@/src/data/demoTemplates';
 import { DEMO_KB_SNIPPETS_FOR_IMPORT } from '@/src/data/demoKnowledgeSnippets';
 
+export type NewAutoReplyRulePayload = {
+  name: string;
+  intentMatch: string | null;
+  keywords: string[];
+  markRepliedOnSend: boolean;
+};
+
 interface AddAutoReplyRuleModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onSubmit?: (payload: NewAutoReplyRulePayload) => Promise<void>;
+  submitting?: boolean;
 }
 
 function appendToReply(prev: string, chunk: string) {
@@ -15,10 +24,19 @@ function appendToReply(prev: string, chunk: string) {
   return prev ? `${prev.trimEnd()}\n\n${t}` : t;
 }
 
-export default function AddAutoReplyRuleModal({ isOpen, onClose }: AddAutoReplyRuleModalProps) {
+export default function AddAutoReplyRuleModal({
+  isOpen,
+  onClose,
+  onSubmit,
+  submitting = false,
+}: AddAutoReplyRuleModalProps) {
   const [ruleName, setRuleName] = useState('');
   const [triggerType, setTriggerType] = useState('time');
   const [templateContent, setTemplateContent] = useState('');
+  const [keywordsText, setKeywordsText] = useState('');
+  const [timePreset, setTimePreset] = useState('weekend');
+  const [intentKey, setIntentKey] = useState('urge_ship');
+  const [markReplied, setMarkReplied] = useState(true);
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [kbSearchQuery, setKbSearchQuery] = useState('');
@@ -50,6 +68,43 @@ export default function AddAutoReplyRuleModal({ isOpen, onClose }: AddAutoReplyR
     setKbSearchQuery('');
     setTplSearchQuery('');
     onClose();
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setRuleName('');
+    setTriggerType('time');
+    setTemplateContent('');
+    setKeywordsText('');
+    setTimePreset('weekend');
+    setIntentKey('urge_ship');
+    setMarkReplied(true);
+  }, [isOpen]);
+
+  const handleSubmit = async () => {
+    const name = ruleName.trim();
+    if (!name) return;
+    let intentMatch: string | null = null;
+    let keywords: string[] = [];
+    if (triggerType === 'time') {
+      intentMatch = `__time__:${timePreset}`;
+    } else if (triggerType === 'keyword') {
+      keywords = keywordsText
+        .split(/[,，]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } else {
+      intentMatch = intentKey;
+    }
+    if (onSubmit) {
+      await onSubmit({
+        name,
+        intentMatch,
+        keywords,
+        markRepliedOnSend: markReplied,
+      });
+    }
+    handleClose();
   };
 
   if (!isOpen) return null;
@@ -130,11 +185,14 @@ export default function AddAutoReplyRuleModal({ isOpen, onClose }: AddAutoReplyR
                   <div className="flex flex-col sm:flex-row sm:items-end gap-4">
                     <div className="flex-1 space-y-1">
                       <label className="text-xs font-medium text-slate-500">生效周期</label>
-                      <select className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]">
-                        <option>周末 (周六、周日)</option>
-                        <option>工作日 (周一至周五)</option>
-                        <option>每天</option>
-                        <option>自定义</option>
+                      <select
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
+                        value={timePreset}
+                        onChange={(e) => setTimePreset(e.target.value)}
+                      >
+                        <option value="weekend">周末 (周六、周日)</option>
+                        <option value="weekday">工作日 (周一至周五)</option>
+                        <option value="daily">每天</option>
                       </select>
                     </div>
                     <div className="flex-1 space-y-1">
@@ -167,6 +225,8 @@ export default function AddAutoReplyRuleModal({ isOpen, onClose }: AddAutoReplyR
                       type="text"
                       placeholder="例如：退款, 发票, 物流"
                       className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
+                      value={keywordsText}
+                      onChange={(e) => setKeywordsText(e.target.value)}
                     />
                   </div>
                 </div>
@@ -176,12 +236,16 @@ export default function AddAutoReplyRuleModal({ isOpen, onClose }: AddAutoReplyR
                 <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-4 mt-2 animate-in fade-in">
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-slate-500">选择 AI 识别的意图</label>
-                    <select className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]">
-                      <option>催发货</option>
-                      <option>修改地址</option>
-                      <option>退货退款</option>
-                      <option>索要发票</option>
-                      <option>产品咨询</option>
+                    <select
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
+                      value={intentKey}
+                      onChange={(e) => setIntentKey(e.target.value)}
+                    >
+                      <option value="urge_ship">催发货</option>
+                      <option value="change_address">修改地址</option>
+                      <option value="return_refund">退货退款</option>
+                      <option value="invoice">索要发票</option>
+                      <option value="product_qa">产品咨询</option>
                     </select>
                   </div>
                 </div>
@@ -254,7 +318,8 @@ export default function AddAutoReplyRuleModal({ isOpen, onClose }: AddAutoReplyR
                 <input
                   type="checkbox"
                   className="w-4 h-4 rounded border-slate-300 text-[#F97316] focus:ring-[#F97316]"
-                  defaultChecked
+                  checked={markReplied}
+                  onChange={(e) => setMarkReplied(e.target.checked)}
                 />
                 <div className="flex flex-col">
                   <span className="text-sm font-medium text-slate-700">
@@ -279,10 +344,11 @@ export default function AddAutoReplyRuleModal({ isOpen, onClose }: AddAutoReplyR
           </button>
           <button
             type="button"
-            onClick={handleClose}
-            className="px-5 py-2.5 bg-[#F97316] text-white rounded-xl text-sm font-bold hover:bg-[#ea580c] transition-colors shadow-sm"
+            disabled={!ruleName.trim() || submitting}
+            onClick={() => void handleSubmit()}
+            className="px-5 py-2.5 bg-[#F97316] text-white rounded-xl text-sm font-bold hover:bg-[#ea580c] transition-colors shadow-sm disabled:opacity-50"
           >
-            保存规则
+            {submitting ? '保存中…' : '保存规则'}
           </button>
         </div>
       </div>

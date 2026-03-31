@@ -11,7 +11,8 @@ const router = Router();
 
 const createBody = z.object({
   orderId: z.string().uuid(),
-  ticketId: z.string().uuid(),
+  /** 可选：不传则按订单查找最近工单，若无则自动创建一条关联工单 */
+  ticketId: z.string().uuid().optional(),
   type: z.nativeEnum(AfterSalesType),
   status: z.nativeEnum(AfterSalesStatus).optional(),
   priority: z.nativeEnum(AfterSalesPriority).optional(),
@@ -80,12 +81,43 @@ router.post('/', async (req: TenantRequest, res) => {
     return;
   }
 
-  const ticket = await prisma.ticket.findFirst({
-    where: { id: body.data.ticketId, tenantId },
-  });
-  if (!ticket) {
-    res.status(404).json({ error: 'not_found', message: 'Ticket not found' });
-    return;
+  let resolvedTicketId = body.data.ticketId;
+  if (resolvedTicketId) {
+    const ticket = await prisma.ticket.findFirst({
+      where: { id: resolvedTicketId, tenantId },
+    });
+    if (!ticket) {
+      res.status(404).json({ error: 'not_found', message: 'Ticket not found' });
+      return;
+    }
+    if (ticket.orderId && ticket.orderId !== body.data.orderId) {
+      res.status(400).json({
+        error: 'ticket_order_mismatch',
+        message: '工单与订单不匹配',
+      });
+      return;
+    }
+  } else {
+    const linked = await prisma.ticket.findFirst({
+      where: { tenantId, orderId: body.data.orderId },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (linked) {
+      resolvedTicketId = linked.id;
+    } else {
+      const created = await prisma.ticket.create({
+        data: {
+          id: randomUUID(),
+          tenantId,
+          channelId: order.channelId,
+          customerId: order.customerId,
+          orderId: order.id,
+          subject: `售后登记 · 订单 ${order.platformOrderId}`,
+          slaDueAt: new Date(Date.now() + 48 * 3600000),
+        },
+      });
+      resolvedTicketId = created.id;
+    }
   }
 
   if (body.data.refundAmount != null) {
@@ -104,7 +136,7 @@ router.post('/', async (req: TenantRequest, res) => {
       id: randomUUID(),
       tenantId,
       orderId: body.data.orderId,
-      ticketId: body.data.ticketId,
+      ticketId: resolvedTicketId,
       type: body.data.type,
       status: body.data.status ?? AfterSalesStatus.submitted,
       priority: body.data.priority ?? AfterSalesPriority.medium,
@@ -166,9 +198,8 @@ router.patch('/:id', async (req: TenantRequest, res) => {
       return;
     }
     const u = await prisma.user.findFirst({ where: { id: uid, tenantId } });
-    const ok =
-      u &&
-      [UserRole.finance, UserRole.admin, UserRole.operations].includes(u.role);
+    const allowed = new Set<UserRole>([UserRole.finance, UserRole.admin, UserRole.operations]);
+    const ok = u && allowed.has(u.role);
     if (!ok) {
       res.status(403).json({
         error: 'forbidden',

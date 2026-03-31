@@ -14,6 +14,7 @@ export function mapTicket(
   return {
     id: t.id,
     channelId: t.channel?.displayName ?? t.channelId,
+    platformType: t.channel?.platformType ?? null,
     channelRefId: t.channelId,
     customerId: t.customerId,
     orderId: t.orderId,

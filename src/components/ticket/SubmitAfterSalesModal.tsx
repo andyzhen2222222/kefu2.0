@@ -1,8 +1,21 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, Search, Plus, Upload, Calendar, AlertCircle, Package, Sparkles, Loader2 } from 'lucide-react';
 import { cn, openFieldConfigPage } from '@/src/lib/utils';
-import { Order, AfterSalesType } from '@/src/types';
+import { Order, AfterSalesType, type AfterSalesRecord } from '@/src/types';
 import { recognizeAfterSalesFromFeedback } from '@/src/services/geminiService';
+import {
+  fetchOrderByPlatformOrderId,
+  mapApiOrderToUi,
+  createAfterSalesRecord,
+  patchAfterSalesRecord,
+} from '@/src/services/intellideskApi';
+
+type AfterSalesPriority = 'low' | 'medium' | 'high';
+
+function coerceAfterSalesPriority(v: unknown): AfterSalesPriority {
+  if (v === 'low' || v === 'medium' || v === 'high') return v;
+  return 'low';
+}
 
 const AFTER_SALES_CATEGORY_LABELS: Record<string, string> = {
   logistics: '物流问题',
@@ -17,24 +30,65 @@ interface SubmitAfterSalesModalProps {
   isOpen: boolean;
   onClose: () => void;
   order?: Order;
-  initialData?: any; // Add initialData prop to pass record when editing
-  onSubmit: (data: any) => void;
+  initialData?: AfterSalesRecord;
+  onSubmit: (data: Record<string, unknown>) => void;
+  /** 配置 API 时由父组件传入，走 POST/PATCH /api/after-sales */
+  apiSubmit?: {
+    tenantId: string;
+    userId: string | undefined;
+    /** 从工单详情打开时传入，用于与订单一并提交；手动登记仅搜订单时不必传 */
+    defaultTicketId?: string;
+    onSuccess: () => void | Promise<void>;
+  };
 }
 
-export default function SubmitAfterSalesModal({ isOpen, onClose, order, initialData, onSubmit }: SubmitAfterSalesModalProps) {
+export default function SubmitAfterSalesModal({
+  isOpen,
+  onClose,
+  order,
+  initialData,
+  onSubmit,
+  apiSubmit,
+}: SubmitAfterSalesModalProps) {
   // If initialData exists, we initialize state with it (simulating an edit mode)
   const [searchOrderQuery, setSearchOrderQuery] = useState('');
   const [searchedOrder, setSearchedOrder] = useState<Order | null>(null);
 
   const [type, setType] = useState<AfterSalesType>(initialData?.type || AfterSalesType.REFUND);
   const [handlingMethod, setHandlingMethod] = useState(initialData?.handlingMethod || '待确认');
-  const [priority, setPriority] = useState(initialData?.priority || 'low');
+  const [priority, setPriority] = useState<AfterSalesPriority>(
+    coerceAfterSalesPriority(initialData?.priority)
+  );
   const [problemType, setProblemType] = useState(initialData?.problemType || '');
   const [buyerFeedback, setBuyerFeedback] = useState(initialData?.buyerFeedback || '');
   const [refundAmount, setRefundAmount] = useState<number | ''>(initialData?.refundAmount || '');
   const [refundExecutionType, setRefundExecutionType] = useState<'manual' | 'api'>('manual');
   const [afterSalesCategory, setAfterSalesCategory] = useState('');
   const [isRecognizing, setIsRecognizing] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setApiError(null);
+    if (initialData) {
+      setType(initialData.type);
+      setHandlingMethod(initialData.handlingMethod || '待确认');
+      setPriority(coerceAfterSalesPriority(initialData.priority));
+      setProblemType(initialData.problemType || '');
+      setBuyerFeedback(initialData.buyerFeedback || '');
+      setRefundAmount(initialData.refundAmount ?? '');
+    } else {
+      setType(AfterSalesType.REFUND);
+      setHandlingMethod('待确认');
+      setPriority('low');
+      setProblemType('');
+      setBuyerFeedback('');
+      setRefundAmount('');
+      setSearchedOrder(null);
+      setSearchOrderQuery('');
+    }
+  }, [isOpen, initialData?.id, apiSubmit?.defaultTicketId]);
 
   if (!isOpen) return null;
 
@@ -51,7 +105,7 @@ export default function SubmitAfterSalesModal({ isOpen, onClose, order, initialD
         currency: currentOrder?.currency,
       });
       if (result.afterSalesType) setAfterSalesCategory(result.afterSalesType);
-      setPriority(result.priority);
+      setPriority(coerceAfterSalesPriority(result.priority));
       setType(result.processingType);
       if (result.afterSalesType) {
         setProblemType(AFTER_SALES_CATEGORY_LABELS[result.afterSalesType] || result.afterSalesType);
@@ -67,29 +121,42 @@ export default function SubmitAfterSalesModal({ isOpen, onClose, order, initialD
     }
   };
 
-  const handleSearchOrder = () => {
-    // Mock order search
-    if (searchOrderQuery) {
-      setSearchedOrder({
-        id: searchOrderQuery,
-        platformOrderId: `PLTF-${searchOrderQuery}`,
-        customerId: 'C-MOCK',
-        channelId: 'Amazon',
-        skuList: ['SKU-123', 'SKU-456'],
-        productTitles: ['Mock Product 1', 'Mock Product 2'],
-        amount: 199.99,
-        currency: 'USD',
-        orderStatus: 'delivered',
-        shippingStatus: 'Delivered',
-        trackingNumber: 'TRK-MOCK-123',
-        deliveryEta: '2024-03-20',
-        paymentStatus: 'Paid',
-        carrier: 'UPS',
-        hasVatInfo: false,
-        logisticsStatus: 2,
-        logisticsEvents: []
-      } as any); // Casting as any to bypass strict type check for mock
+  const handleSearchOrder = async () => {
+    setApiError(null);
+    const q = searchOrderQuery.trim();
+    if (!q) return;
+    if (apiSubmit) {
+      try {
+        const raw = await fetchOrderByPlatformOrderId(
+          apiSubmit.tenantId,
+          apiSubmit.userId,
+          q
+        );
+        setSearchedOrder(mapApiOrderToUi(raw));
+      } catch (e) {
+        setSearchedOrder(null);
+        setApiError(e instanceof Error ? e.message : String(e));
+      }
+      return;
     }
+    setSearchedOrder({
+      id: q,
+      platformOrderId: `PLTF-${q}`,
+      customerId: 'C-MOCK',
+      channelId: 'Amazon',
+      skuList: ['SKU-123', 'SKU-456'],
+      productTitles: ['Mock Product 1', 'Mock Product 2'],
+      amount: 199.99,
+      currency: 'USD',
+      orderStatus: 'shipped',
+      shippingStatus: 'Delivered',
+      trackingNumber: 'TRK-MOCK-123',
+      deliveryEta: '2024-03-20',
+      paymentStatus: 'Paid',
+      carrier: 'UPS',
+      hasVatInfo: false,
+      logisticsEvents: [],
+    });
   };
 
   return (
@@ -104,6 +171,11 @@ export default function SubmitAfterSalesModal({ isOpen, onClose, order, initialD
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-8">
+          {apiError ? (
+            <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-800">
+              {apiError}
+            </div>
+          ) : null}
           {/* Order Info Section (Manual Entry) */}
           {!order && (
             <section className="space-y-4">
@@ -114,7 +186,8 @@ export default function SubmitAfterSalesModal({ isOpen, onClose, order, initialD
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-1.5 col-span-2 md:col-span-1">
                   <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
-                    <span className="text-red-500">*</span> 订单号搜索:
+                    <span className="text-red-500">*</span>{' '}
+                    {apiSubmit ? '平台订单号' : '订单号搜索'}:
                   </label>
                   <div className="relative flex gap-2">
                     <div className="relative flex-1">
@@ -135,6 +208,11 @@ export default function SubmitAfterSalesModal({ isOpen, onClose, order, initialD
                       搜索带入
                     </button>
                   </div>
+                  {apiSubmit && !initialData ? (
+                    <p className="text-[11px] text-slate-400 col-span-2">
+                      输入平台订单号搜索即可；系统会按订单自动关联工单（无工单时会自动创建）。
+                    </p>
+                  ) : null}
                 </div>
               </div>
               
@@ -163,7 +241,7 @@ export default function SubmitAfterSalesModal({ isOpen, onClose, order, initialD
                       <span className="font-medium text-slate-900">{searchedOrder.platformOrderId}</span>
                     </div>
                     <div>
-                      <span className="text-slate-500 block mb-1">渠道</span>
+                      <span className="text-slate-500 block mb-1">店铺</span>
                       <span className="font-medium text-slate-900">{searchedOrder.channelId}</span>
                     </div>
                     <div>
@@ -208,7 +286,7 @@ export default function SubmitAfterSalesModal({ isOpen, onClose, order, initialD
                 </label>
                 <select 
                   value={priority}
-                  onChange={(e) => setPriority(e.target.value)}
+                  onChange={(e) => setPriority(e.target.value as AfterSalesPriority)}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
                 >
                   <option value="low">低</option>
@@ -473,12 +551,84 @@ export default function SubmitAfterSalesModal({ isOpen, onClose, order, initialD
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 bg-slate-50 border-t border-slate-100">
-          <button onClick={onClose} className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-200 rounded-xl transition-colors">
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={onClose}
+            className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-200 rounded-xl transition-colors"
+          >
             取消
           </button>
-          <button 
-            onClick={() => {
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={async () => {
+              setApiError(null);
+              if (apiSubmit && !initialData?.id) {
+                if (!currentOrder?.id) {
+                  setApiError('请先搜索并匹配订单');
+                  return;
+                }
+                if (!buyerFeedback.trim()) {
+                  setApiError('请填写买家反馈');
+                  return;
+                }
+                setSubmitting(true);
+                try {
+                  await createAfterSalesRecord(apiSubmit.tenantId, apiSubmit.userId, {
+                    orderId: currentOrder.id,
+                    ...(apiSubmit.defaultTicketId
+                      ? { ticketId: apiSubmit.defaultTicketId }
+                      : {}),
+                    type,
+                    handlingMethod,
+                    priority: priority as 'low' | 'medium' | 'high',
+                    problemType,
+                    buyerFeedback: buyerFeedback.trim(),
+                    refundAmount:
+                      refundAmount === '' || refundAmount === undefined
+                        ? undefined
+                        : Number(refundAmount),
+                  });
+                  await apiSubmit.onSuccess();
+                  onClose();
+                } catch (e) {
+                  setApiError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setSubmitting(false);
+                }
+                return;
+              }
+              if (apiSubmit && initialData?.id) {
+                setSubmitting(true);
+                try {
+                  await patchAfterSalesRecord(
+                    apiSubmit.tenantId,
+                    apiSubmit.userId,
+                    initialData.id,
+                    {
+                      handlingMethod,
+                      priority: priority as 'low' | 'medium' | 'high',
+                      problemType,
+                      buyerFeedback: buyerFeedback.trim(),
+                      refundAmount:
+                        refundAmount === '' || refundAmount === undefined
+                          ? undefined
+                          : Number(refundAmount),
+                    }
+                  );
+                  await apiSubmit.onSuccess();
+                  onClose();
+                } catch (e) {
+                  setApiError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setSubmitting(false);
+                }
+                return;
+              }
               onSubmit({
+                orderId: currentOrder?.id,
+                ticketId: apiSubmit?.defaultTicketId,
                 type,
                 handlingMethod,
                 priority,
@@ -491,17 +641,21 @@ export default function SubmitAfterSalesModal({ isOpen, onClose, order, initialD
               onClose();
             }}
             className={cn(
-              "px-8 py-2.5 rounded-xl text-sm font-bold transition-colors shadow-sm text-white",
+              'px-8 py-2.5 rounded-xl text-sm font-bold transition-colors shadow-sm text-white inline-flex items-center gap-2',
               type === AfterSalesType.REFUND && refundExecutionType === 'api'
-                ? "bg-green-600 hover:bg-green-700" 
-                : "bg-[#F97316] hover:bg-[#ea580c]"
+                ? 'bg-green-600 hover:bg-green-700'
+                : 'bg-[#F97316] hover:bg-[#ea580c]',
+              submitting && 'opacity-70 pointer-events-none'
             )}
           >
-            {initialData ? '保存修改' : 
-              (type === AfterSalesType.REFUND && refundExecutionType === 'api' && refundAmount)
+            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            {initialData
+              ? '保存修改'
+              : type === AfterSalesType.REFUND &&
+                  refundExecutionType === 'api' &&
+                  refundAmount
                 ? `提交并原路退款 (${currentOrder?.currency || 'USD'} ${refundAmount})`
-                : '提交售后'
-            }
+                : '提交售后'}
           </button>
         </div>
       </div>

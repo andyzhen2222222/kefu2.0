@@ -1,5 +1,6 @@
 import { useState, useEffect, createContext, useContext } from 'react';
 import { auth, db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
+import { registerIntellideskBearerTokenGetter } from '@/src/services/intellideskApi';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { User } from '@/src/types';
@@ -7,7 +8,7 @@ import { User } from '@/src/types';
 interface AuthContextType {
   user: User | null;
   loading: boolean;
-  signIn: () => Promise<void>;
+  signIn: (account?: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -16,6 +17,18 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    registerIntellideskBearerTokenGetter(async () => {
+      try {
+        const u = auth.currentUser;
+        if (!u) return null;
+        return await u.getIdToken();
+      } catch {
+        return null;
+      }
+    });
+  }, []);
 
   useEffect(() => {
     const mockUser = localStorage.getItem('mockUser');
@@ -64,13 +77,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, []);
 
-  const signIn = async () => {
+  const signIn = async (account?: string) => {
     try {
+      // 若有输入特定账号，可用于简单 mock 不同角色（比如包含 agent 字样就给一线客服角色）
+      let role: User['role'] = 'admin';
+      let name = '管理员（演示）';
+      if (account?.includes('agent')) {
+        role = 'agent';
+        name = '一线客服（演示）';
+      } else if (account?.includes('finance')) {
+        role = 'finance';
+        name = '财务（演示）';
+      }
+
       const mockUser: User = {
-        id: 'mock-user-id',
-        name: '管理员（演示）',
-        email: 'admin@example.com',
-        role: 'admin',
+        id: account ? `mock-user-${account}` : 'mock-user-id',
+        name,
+        email: account ? `${account}@example.com` : 'admin@example.com',
+        role,
       };
       setUser(mockUser);
       localStorage.setItem('mockUser', JSON.stringify(mockUser));

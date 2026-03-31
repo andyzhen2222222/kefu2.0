@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Filter, Inbox, ChevronDown, ChevronRight, Store, ArrowUpDown } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
-import { Ticket, TicketStatus, Order, Customer } from '@/src/types';
+import { Ticket, TicketStatus, Order, Customer, Sentiment } from '@/src/types';
 import { formatDistanceToNow } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { InboxTicketStatusIcons } from '@/src/lib/ticketStatusUi';
@@ -10,12 +10,31 @@ import {
   getTranslationSettings,
   getTicketSubjectForDisplay,
 } from '@/src/components/settings/TranslationSettingsPage';
+import { platformGroupLabelForTicket } from '@/src/lib/platformLabels';
+
+const SENTIMENT_LABEL: Record<string, string> = {
+  [Sentiment.ANGRY]: '愤怒抱怨',
+  [Sentiment.ANXIOUS]: '焦急催促',
+  [Sentiment.NEUTRAL]: '平静中性',
+  [Sentiment.JOYFUL]: '开心满意',
+};
+
+const ORDER_STATUS_LABEL: Record<string, string> = {
+  unshipped: '未发货',
+  shipped: '已发货',
+  refunded: '已退款',
+  partial_refund: '部分退款',
+};
+
+type ConversationFilter = '' | 'needs_attention' | 'replied' | 'sla_overdue';
 
 interface InboxListProps {
   tickets: Ticket[];
   orders?: Record<string, Order>;
   customers?: Record<string, Customer>;
   selectedTicketId?: string;
+  /** 例如 ?filter=unread，与仪表盘入口一致 */
+  mailboxSearchSuffix?: string;
 }
 
 export default function InboxList({
@@ -23,13 +42,19 @@ export default function InboxList({
   orders = {},
   customers = {},
   selectedTicketId,
+  mailboxSearchSuffix = '',
 }: InboxListProps) {
   const navigate = useNavigate();
   const autoTranslateEnabled = getTranslationSettings().autoTranslateEnabled;
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [sortBy, setSortBy] = useState<'time_desc' | 'time_asc' | 'priority'>('time_desc');
-  
+  const [filterChannel, setFilterChannel] = useState('');
+  const [filterIntent, setFilterIntent] = useState('');
+  const [filterSentiment, setFilterSentiment] = useState('');
+  const [filterOrderStatus, setFilterOrderStatus] = useState('');
+  const [filterConversation, setFilterConversation] = useState<ConversationFilter>('');
+
   // Tree state
   const [expandedPlatforms, setExpandedPlatforms] = useState<Record<string, boolean>>({});
   const [expandedShops, setExpandedShops] = useState<Record<string, boolean>>({});
@@ -42,10 +67,70 @@ export default function InboxList({
     setExpandedShops(prev => ({ ...prev, [shop]: !prev[shop] }));
   };
 
+  const channelOptions = useMemo(() => {
+    const s = new Set<string>();
+    tickets.forEach((t) => {
+      if (t.channelId?.trim()) s.add(t.channelId);
+    });
+    return [...s].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  }, [tickets]);
+
+  const intentOptions = useMemo(() => {
+    const s = new Set<string>();
+    tickets.forEach((t) => {
+      const v = t.intent?.trim();
+      if (v) s.add(v);
+    });
+    return [...s].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  }, [tickets]);
+
+  const sentimentOptions = useMemo(() => {
+    const s = new Set<string>();
+    tickets.forEach((t) => {
+      if (t.sentiment) s.add(t.sentiment);
+    });
+    return [...s].sort();
+  }, [tickets]);
+
+  const orderStatusOptions = useMemo(() => {
+    const s = new Set<string>();
+    tickets.forEach((t) => {
+      if (!t.orderId) return;
+      const st = orders[t.orderId]?.orderStatus;
+      if (st) s.add(st);
+    });
+    return [...s].sort();
+  }, [tickets, orders]);
+
+  const conversationOptions = useMemo(() => {
+    const opts: { value: ConversationFilter; label: string }[] = [];
+    if (
+      tickets.some(
+        (t) =>
+          t.messageProcessingStatus === 'unread' || t.messageProcessingStatus === 'unreplied'
+      )
+    ) {
+      opts.push({ value: 'needs_attention', label: '待处理（未读/未回复）' });
+    }
+    if (tickets.some((t) => t.messageProcessingStatus === 'replied')) {
+      opts.push({ value: 'replied', label: '已回复' });
+    }
+    if (
+      tickets.some(
+        (t) =>
+          t.status !== TicketStatus.RESOLVED &&
+          t.status !== TicketStatus.SPAM &&
+          new Date(t.slaDueAt).getTime() < Date.now()
+      )
+    ) {
+      opts.push({ value: 'sla_overdue', label: 'SLA 已超时' });
+    }
+    return opts;
+  }, [tickets]);
+
   const sortedTickets = useMemo(() => {
     let result = [...tickets];
-    
-    // Filter by search query
+
     if (searchQuery) {
       const query = searchQuery.trim().toLowerCase();
       result = result.filter((t) => {
@@ -58,6 +143,27 @@ export default function InboxList({
           (t.orderId?.toLowerCase().includes(query) ?? false)
         );
       });
+    }
+
+    if (filterChannel) result = result.filter((t) => t.channelId === filterChannel);
+    if (filterIntent) result = result.filter((t) => (t.intent?.trim() || '') === filterIntent);
+    if (filterSentiment) result = result.filter((t) => t.sentiment === filterSentiment);
+    if (filterOrderStatus) {
+      result = result.filter((t) => orders[t.orderId ?? '']?.orderStatus === filterOrderStatus);
+    }
+    if (filterConversation === 'needs_attention') {
+      result = result.filter(
+        (t) => t.messageProcessingStatus === 'unread' || t.messageProcessingStatus === 'unreplied'
+      );
+    } else if (filterConversation === 'replied') {
+      result = result.filter((t) => t.messageProcessingStatus === 'replied');
+    } else if (filterConversation === 'sla_overdue') {
+      result = result.filter(
+        (t) =>
+          t.status !== TicketStatus.RESOLVED &&
+          t.status !== TicketStatus.SPAM &&
+          new Date(t.slaDueAt).getTime() < Date.now()
+      );
     }
 
     // Sort
@@ -73,11 +179,22 @@ export default function InboxList({
     });
 
     return result;
-  }, [tickets, searchQuery, sortBy, autoTranslateEnabled]);
+  }, [
+    tickets,
+    orders,
+    searchQuery,
+    sortBy,
+    autoTranslateEnabled,
+    filterChannel,
+    filterIntent,
+    filterSentiment,
+    filterOrderStatus,
+    filterConversation,
+  ]);
 
   const groupedTickets = useMemo(() => {
     return sortedTickets.reduce((acc, ticket) => {
-      const platform = ticket.channelId.split(' ')[0];
+      const platform = platformGroupLabelForTicket(ticket.platformType, ticket.channelId);
       const shop = ticket.channelId;
       if (!acc[platform]) acc[platform] = {};
       if (!acc[platform][shop]) acc[platform][shop] = [];
@@ -86,23 +203,36 @@ export default function InboxList({
     }, {} as Record<string, Record<string, Ticket[]>>);
   }, [sortedTickets]);
 
-  // Initialize expanded state for first render
-  useMemo(() => {
-    if (Object.keys(expandedPlatforms).length === 0 && Object.keys(groupedTickets).length > 0) {
-      const initialPlatforms: Record<string, boolean> = {};
-      const initialShops: Record<string, boolean> = {};
-      
-      Object.entries(groupedTickets).forEach(([platform, shops]) => {
-        initialPlatforms[platform] = true;
-        Object.keys(shops).forEach(shop => {
-          initialShops[shop] = true;
+  useEffect(() => {
+    const pKeys = Object.keys(groupedTickets);
+    if (pKeys.length === 0) return;
+    setExpandedPlatforms((prev) => {
+      if (Object.keys(prev).length > 0) return prev;
+      const initial: Record<string, boolean> = {};
+      pKeys.forEach((k) => {
+        initial[k] = true;
+      });
+      return initial;
+    });
+    setExpandedShops((prev) => {
+      if (Object.keys(prev).length > 0) return prev;
+      const initial: Record<string, boolean> = {};
+      Object.values(groupedTickets).forEach((shops) => {
+        Object.keys(shops).forEach((shop) => {
+          initial[shop] = true;
         });
       });
-      
-      setExpandedPlatforms(initialPlatforms);
-      setExpandedShops(initialShops);
-    }
+      return initial;
+    });
   }, [groupedTickets]);
+
+  const resetFilters = () => {
+    setFilterChannel('');
+    setFilterIntent('');
+    setFilterSentiment('');
+    setFilterOrderStatus('');
+    setFilterConversation('');
+  };
 
   return (
     <div className="w-[320px] flex flex-col bg-white border-r border-slate-200/90 shrink-0 h-full">
@@ -163,41 +293,73 @@ export default function InboxList({
         {showFilters && (
           <div className="pt-2 space-y-2 animate-in slide-in-from-top-2 duration-200">
             <div className="grid grid-cols-2 gap-2">
-              <select className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]">
-                <option value="">平台渠道</option>
-                <option value="amazon">Amazon</option>
-                <option value="ebay">eBay</option>
+              <select
+                value={filterChannel}
+                onChange={(e) => setFilterChannel(e.target.value)}
+                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
+              >
+                <option value="">店铺（全部）</option>
+                {channelOptions.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
               </select>
-              <select className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]">
-                <option value="">买家意图</option>
-                <option value="refund">要求退款</option>
-                <option value="logistics">查询物流</option>
-                <option value="product">产品咨询</option>
-                <option value="aftersales">寻求售后</option>
+              <select
+                value={filterIntent}
+                onChange={(e) => setFilterIntent(e.target.value)}
+                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
+              >
+                <option value="">买家意图（全部）</option>
+                {intentOptions.map((intent) => (
+                  <option key={intent} value={intent}>
+                    {intent}
+                  </option>
+                ))}
               </select>
-              <select className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]">
-                <option value="">买家情绪</option>
-                <option value="angry">愤怒抱怨</option>
-                <option value="anxious">焦急催促</option>
-                <option value="neutral">平静中性</option>
-                <option value="joyful">开心满意</option>
+              <select
+                value={filterSentiment}
+                onChange={(e) => setFilterSentiment(e.target.value)}
+                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
+              >
+                <option value="">买家情绪（全部）</option>
+                {sentimentOptions.map((s) => (
+                  <option key={s} value={s}>
+                    {SENTIMENT_LABEL[s] ?? s}
+                  </option>
+                ))}
               </select>
-              <select className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]">
-                <option value="">订单状态</option>
-                <option value="unshipped">待发货</option>
-                <option value="shipped">已发货</option>
-                <option value="refunded">已退款</option>
-                <option value="partial_refund">部分退款</option>
+              <select
+                value={filterOrderStatus}
+                onChange={(e) => setFilterOrderStatus(e.target.value)}
+                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
+              >
+                <option value="">订单状态（全部）</option>
+                {orderStatusOptions.map((st) => (
+                  <option key={st} value={st}>
+                    {ORDER_STATUS_LABEL[st] ?? st}
+                  </option>
+                ))}
               </select>
-              <select className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]">
-                <option value="">会话状态</option>
-                <option value="waiting">待回复</option>
-                <option value="replied">已回复</option>
-                <option value="timeout">已超时</option>
+              <select
+                value={filterConversation}
+                onChange={(e) => setFilterConversation(e.target.value as ConversationFilter)}
+                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
+              >
+                <option value="">会话 / SLA（全部）</option>
+                {conversationOptions.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="flex justify-end pt-1">
-              <button className="text-xs text-[#F97316] font-medium hover:underline">
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="text-xs text-[#F97316] font-medium hover:underline"
+              >
                 重置过滤
               </button>
             </div>
@@ -277,7 +439,7 @@ export default function InboxList({
                               return (
                                 <div
                                   key={ticket.id}
-                                  onClick={() => navigate(`/mailbox/${ticket.id}`)}
+                                  onClick={() => navigate(`/mailbox/${ticket.id}${mailboxSearchSuffix}`)}
                                   className={cn(
                                     'px-3 py-2.5 cursor-pointer transition-colors relative border-b border-slate-200/70 last:border-b-0',
                                     isSelected

@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto';
 import { TicketStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import type { TenantRequest } from '../middleware/tenant.js';
-import { mapTicket, mapMessage } from '../dto/mappers.js';
+import { mapTicket, mapMessage, mapCustomer, mapOrder } from '../dto/mappers.js';
 import { broadcastTenant } from '../lib/wsHub.js';
 
 const router = Router();
@@ -65,7 +65,7 @@ router.get('/', async (req: TenantRequest, res) => {
 
   if (filter === 'unread') {
     and.push({
-      OR: [{ messageProcessingStatus: 'unread' }, { status: TicketStatus.new }],
+      OR: [{ messageProcessingStatus: 'unread' }, { status: TicketStatus['new'] }],
     });
   } else if (filter === 'unreplied') {
     and.push({ messageProcessingStatus: 'unreplied' });
@@ -86,13 +86,29 @@ router.get('/', async (req: TenantRequest, res) => {
 
   if (search?.trim()) {
     const s = search.trim();
-    and.push({
-      OR: [
-        { subject: { contains: s, mode: 'insensitive' } },
-        { subjectOriginal: { contains: s, mode: 'insensitive' } },
-        { intent: { contains: s, mode: 'insensitive' } },
-      ],
-    });
+    const ilikeOr: object[] = [
+      { subject: { contains: s, mode: 'insensitive' } },
+      { subjectOriginal: { contains: s, mode: 'insensitive' } },
+      { intent: { contains: s, mode: 'insensitive' } },
+    ];
+    if (process.env.PG_TRGM_SEARCH === '1') {
+      try {
+        const extra = await prisma.$queryRaw<{ id: string }[]>`
+          SELECT id FROM "Ticket"
+          WHERE "tenantId" = ${tenantId}
+          AND (
+            similarity(subject, ${s}) > 0.15
+            OR similarity(COALESCE("subjectOriginal", ''), ${s}) > 0.15
+          )
+        `;
+        if (extra.length) {
+          ilikeOr.push({ id: { in: extra.map((e) => e.id) } });
+        }
+      } catch {
+        /* 未启用 pg_trgm 扩展或查询失败时仅使用 ILIKE */
+      }
+    }
+    and.push({ OR: ilikeOr });
   }
 
   const where = { AND: and };
@@ -125,7 +141,9 @@ router.get('/:id', async (req: TenantRequest, res) => {
     include: {
       channel: true,
       customer: true,
-      order: true,
+      order: {
+        include: { channel: true, logisticsEvents: true },
+      },
       messages: { orderBy: { createdAt: 'asc' } },
     },
   });
@@ -133,10 +151,12 @@ router.get('/:id', async (req: TenantRequest, res) => {
     res.status(404).json({ error: 'not_found', message: 'Ticket not found' });
     return;
   }
-  const visMessages = ticket.messages.filter((m) => !m.isInternal || true);
+  // 坐席端展示全部消息（含内部备注）；若未来开放买家端，可按角色过滤 isInternal
   res.json({
     ...mapTicket(ticket),
-    messages: visMessages.map(mapMessage),
+    messages: ticket.messages.map(mapMessage),
+    customer: ticket.customer ? mapCustomer(ticket.customer) : null,
+    order: ticket.order ? mapOrder(ticket.order) : null,
   });
 });
 
@@ -202,13 +222,16 @@ router.post('/:id/messages', async (req: TenantRequest, res) => {
     },
   });
 
+  const agentOutbound =
+    !body.data.isInternal && body.data.senderType === 'agent';
+
   await prisma.ticket.update({
     where: { id },
     data: {
       updatedAt: new Date(),
       firstResponseAt:
-        ticket.firstResponseAt ??
-        (!body.data.isInternal && body.data.senderType === 'agent' ? new Date() : undefined),
+        ticket.firstResponseAt ?? (agentOutbound ? new Date() : undefined),
+      ...(agentOutbound ? { messageProcessingStatus: 'replied' as const } : {}),
     },
   });
 

@@ -89,7 +89,7 @@ function slaDueFrom(createdIso: string): string {
   return new Date(t).toISOString();
 }
 
-/** 将反馈记录映射为 IntelliDesk 工单（渠道列用于树状分组：首词为平台、整串为店铺） */
+/** 将反馈记录映射为 IntelliDesk 工单（店铺名用于列表；平台由 platformType 或店铺名推断） */
 export function mapFeedbackToTicket(
   row: NezhaFeedbackItem,
   channelLabel: string

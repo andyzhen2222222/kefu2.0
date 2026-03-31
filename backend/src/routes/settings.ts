@@ -31,6 +31,8 @@ router.post('/agent-seats', requireRoles(UserRole.admin, UserRole.team_lead), as
     res.status(400).json({ error: 'bad_request', message: b.error.flatten().toString() });
     return;
   }
+  const roleId =
+    b.data.roleId && String(b.data.roleId).trim() ? String(b.data.roleId).trim() : 'default';
   const row = await prisma.agentSeat.create({
     data: {
       id: randomUUID(),
@@ -38,7 +40,7 @@ router.post('/agent-seats', requireRoles(UserRole.admin, UserRole.team_lead), as
       displayName: b.data.displayName,
       email: b.data.email,
       account: b.data.account,
-      roleId: b.data.roleId ?? 'default',
+      roleId,
       status: b.data.status ?? 'active',
     },
   });
@@ -62,9 +64,14 @@ router.patch(
       res.status(400).json({ error: 'bad_request', message: b.error.flatten().toString() });
       return;
     }
+    const patch = { ...b.data };
+    if (patch.roleId !== undefined) {
+      patch.roleId =
+        patch.roleId && String(patch.roleId).trim() ? String(patch.roleId).trim() : 'default';
+    }
     const row = await prisma.agentSeat.updateMany({
       where: { id: req.params.id, tenantId: req.tenantId! },
-      data: b.data,
+      data: patch,
     });
     if (row.count === 0) {
       res.status(404).json({ error: 'not_found', message: 'Seat not found' });

@@ -5,8 +5,10 @@ info:
   description: |
     与 PRD_Backend_Detailed 对齐。鉴权：请求头 `X-Tenant-Id`（必填）、`X-User-Id`（可选，演示用已存在用户 id）。
 servers:
+  - url: http://localhost:4001
+    description: 本地后端直连（默认 PORT）
   - url: http://localhost:4000
-    description: 本地开发
+    description: 经前端 Vite 同源代理（npm run dev:api）
 
 tags:
   - name: tickets
@@ -100,14 +102,77 @@ components:
           items:
             type: string
             enum: [customer, manager]
+    Customer:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string }
+        phone: { type: string, nullable: true }
+        shippingCountry: { type: string }
+        sentiment: { type: string }
+        segments:
+          type: array
+          items: { type: string }
+        totalOrderValue: { type: number }
+        ordersCount: { type: integer }
+        latestPurchaseAt: { type: string, format: date-time }
+        customerSince: { type: string, format: date-time }
+    LogisticsEvent:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string }
+        subStatus: { type: string }
+        description: { type: string }
+        location: { type: string, nullable: true }
+        timestamp: { type: string, format: date-time }
+    Order:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        platformOrderId: { type: string }
+        customerId: { type: string, format: uuid }
+        channelId: { type: string }
+        channelRefId: { type: string, format: uuid }
+        skuList:
+          type: array
+          items: { type: string }
+        productTitles:
+          type: array
+          items: { type: string }
+        amount: { type: number }
+        currency: { type: string }
+        orderStatus: { type: string }
+        shippingStatus: { type: string }
+        trackingNumber: { type: string, nullable: true }
+        deliveryEta: { type: string, nullable: true }
+        paymentStatus: { type: string }
+        refundStatus: { type: string, nullable: true }
+        returnStatus: { type: string, nullable: true }
+        logisticsStatus: { type: string, nullable: true }
+        logisticsEvents:
+          type: array
+          items: { $ref: '#/components/schemas/LogisticsEvent' }
+        carrier: { type: string, nullable: true }
+        hasVatInfo: { type: boolean }
     TicketDetail:
       allOf:
         - $ref: '#/components/schemas/Ticket'
         - type: object
+          required: [messages]
           properties:
             messages:
               type: array
               items: { $ref: '#/components/schemas/Message' }
+            customer:
+              allOf:
+                - $ref: '#/components/schemas/Customer'
+              nullable: true
+            order:
+              allOf:
+                - $ref: '#/components/schemas/Order'
+              nullable: true
     Pagination:
       type: object
       properties:

@@ -2,6 +2,11 @@ import { useState, useMemo } from 'react';
 import { Plus, Search, Filter, Edit, Trash2, Copy, Globe, Tag } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import AddTemplateModal, { type TemplateFormValues, type TemplateDraft } from './AddTemplateModal';
+import {
+  loadStoredReplyTemplates,
+  persistStoredReplyTemplates,
+  type StoredReplyTemplate,
+} from '@/src/lib/replyTemplatesStore';
 
 interface Template {
   id: string;
@@ -35,45 +40,6 @@ function newTemplateId() {
   return `tmpl-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-const INITIAL_TEMPLATES: Template[] = [
-  {
-    id: '1',
-    name: '物流延误安抚',
-    platform: 'Amazon',
-    category: '物流问题',
-    categoryValue: 'logistics',
-    content:
-      'Dear {买家姓名},\n\nWe apologize for the delay on order {订单号}. Tracking: {物流单号}.\n\nBest regards,\n{店铺名称}',
-    languages: ['EN', 'DE', 'FR'],
-    updatedAt: '2026-03-24',
-    status: 'active',
-  },
-  {
-    id: '2',
-    name: '退款确认通知',
-    platform: 'All',
-    category: '售后退款',
-    categoryValue: 'after_sales_refund',
-    content:
-      'Hi {买家姓名},\n\nYour refund for order {订单号} has been processed. Thank you for your patience.\n\n{店铺名称}',
-    languages: ['EN', 'ES'],
-    updatedAt: '2026-03-23',
-    status: 'active',
-  },
-  {
-    id: '3',
-    name: '好评邀请 (节假日)',
-    platform: 'eBay',
-    category: '营销关怀',
-    categoryValue: 'marketing',
-    content:
-      'Dear {买家姓名},\n\nHappy holidays! If you enjoyed {商品名称}, we would appreciate your feedback.\n\n{店铺名称}',
-    languages: ['EN'],
-    updatedAt: '2026-03-20',
-    status: 'draft',
-  },
-];
-
 function templateToDraft(t: Template): TemplateDraft {
   return {
     id: t.id,
@@ -88,7 +54,9 @@ function templateToDraft(t: Template): TemplateDraft {
 }
 
 export default function TemplatesPage() {
-  const [templates, setTemplates] = useState<Template[]>(INITIAL_TEMPLATES);
+  const [templates, setTemplates] = useState<Template[]>(() =>
+    loadStoredReplyTemplates() as Template[]
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<TemplateDraft | null>(null);
@@ -132,8 +100,8 @@ export default function TemplatesPage() {
     const updatedAt = todayStr();
 
     if (editingId) {
-      setTemplates((prev) =>
-        prev.map((row) =>
+      setTemplates((prev) => {
+        const next = prev.map((row) =>
           row.id === editingId
             ? {
                 ...row,
@@ -147,43 +115,57 @@ export default function TemplatesPage() {
                 updatedAt,
               }
             : row
-        )
-      );
+        );
+        persistStoredReplyTemplates(next as StoredReplyTemplate[]);
+        return next;
+      });
       return;
     }
 
-    setTemplates((prev) => [
-      ...prev,
-      {
-        id: newTemplateId(),
-        name: values.name,
-        platform: values.platform,
-        category: categoryLabel,
-        categoryValue: values.category,
-        content: values.content,
-        languages: values.languages.length ? values.languages : [values.language],
-        status: values.status,
-        updatedAt,
-      },
-    ]);
+    setTemplates((prev) => {
+      const next: Template[] = [
+        ...prev,
+        {
+          id: newTemplateId(),
+          name: values.name,
+          platform: values.platform,
+          category: categoryLabel,
+          categoryValue: values.category,
+          content: values.content,
+          languages: values.languages.length ? values.languages : [values.language],
+          status: values.status,
+          updatedAt,
+        },
+      ];
+      persistStoredReplyTemplates(next as StoredReplyTemplate[]);
+      return next;
+    });
   };
 
   const handleCopy = (t: Template) => {
-    setTemplates((prev) => [
-      ...prev,
-      {
-        ...t,
-        id: newTemplateId(),
-        name: `${t.name} (副本)`,
-        status: 'draft',
-        updatedAt: todayStr(),
-      },
-    ]);
+    setTemplates((prev) => {
+      const next: Template[] = [
+        ...prev,
+        {
+          ...t,
+          id: newTemplateId(),
+          name: `${t.name} (副本)`,
+          status: 'draft',
+          updatedAt: todayStr(),
+        },
+      ];
+      persistStoredReplyTemplates(next as StoredReplyTemplate[]);
+      return next;
+    });
   };
 
   const handleDelete = (t: Template) => {
     if (!window.confirm(`确定删除模板「${t.name}」吗？`)) return;
-    setTemplates((prev) => prev.filter((row) => row.id !== t.id));
+    setTemplates((prev) => {
+      const next = prev.filter((row) => row.id !== t.id);
+      persistStoredReplyTemplates(next as StoredReplyTemplate[]);
+      return next;
+    });
   };
 
   return (

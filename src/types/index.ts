@@ -93,7 +93,10 @@ export interface Order {
 
 export interface Ticket {
   id: string;
+  /** 店铺展示名（同 Channel.displayName） */
   channelId: string;
+  /** 平台类型：AMAZON / EBAY / SHOPIFY / WALMART 等，用于分组与统计 */
+  platformType?: string | null;
   customerId: string;
   orderId?: string;
   status: TicketStatus;
@@ -135,7 +138,7 @@ export interface Message {
   translatedContent?: string;
   /** 出站已译为平台语并发送的文本（与 content 成对）；会话列表默认展示本字段 */
   sentPlatformText?: string;
-  /** 客服出站消息实际送达的渠道（演示用） */
+  /** 客服出站消息实际送达的店铺/平台侧（演示用） */
   deliveryTargets?: ('customer' | 'manager')[];
 }
 

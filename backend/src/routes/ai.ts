@@ -3,25 +3,13 @@ import { z } from 'zod';
 import { GoogleGenAI } from '@google/genai';
 import { prisma } from '../lib/prisma.js';
 import type { TenantRequest } from '../middleware/tenant.js';
+import { rateLimitDistributed } from '../lib/redisClient.js';
 
 const router = Router();
 
 const body = z.object({ ticketId: z.string().uuid() });
 
-/** 简单内存限流：每用户每分钟 20 次 */
-const buckets = new Map<string, { n: number; reset: number }>();
-function rateLimit(key: string, max = 20, windowMs = 60_000): boolean {
-  const now = Date.now();
-  let b = buckets.get(key);
-  if (!b || now > b.reset) {
-    b = { n: 0, reset: now + windowMs };
-    buckets.set(key, b);
-  }
-  b.n += 1;
-  return b.n <= max;
-}
-
-const audit: { at: string; ticketId: string; userId: string | null; op: string }[] = [];
+const audit: { at: string; ticketId: string; userId: string | null | undefined; op: string }[] = [];
 
 router.post('/summarize', async (req: TenantRequest, res) => {
   const parsed = body.safeParse(req.body);
@@ -30,7 +18,7 @@ router.post('/summarize', async (req: TenantRequest, res) => {
     return;
   }
   const key = `${req.userId ?? 'anon'}:${req.tenantId}`;
-  if (!rateLimit(key)) {
+  if (!(await rateLimitDistributed(key, 20, 60_000))) {
     res.status(429).json({ error: 'rate_limit', message: 'Too many AI requests' });
     return;
   }
@@ -89,7 +77,7 @@ router.post('/suggest-reply', async (req: TenantRequest, res) => {
     return;
   }
   const key = `${req.userId ?? 'anon'}:${req.tenantId}`;
-  if (!rateLimit(key)) {
+  if (!(await rateLimitDistributed(key, 20, 60_000))) {
     res.status(429).json({ error: 'rate_limit', message: 'Too many AI requests' });
     return;
   }
