@@ -1,12 +1,33 @@
-import { useState, useMemo } from 'react';
-import { Plus, Search, Filter, Edit, Trash2, Copy, Globe, Tag } from 'lucide-react';
+import { useState, useMemo, useEffect, useCallback, useRef, type ChangeEvent } from 'react';
+import { Plus, Search, Filter, Edit, Trash2, Copy, Tag, Download, Upload } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
-import AddTemplateModal, { type TemplateFormValues, type TemplateDraft } from './AddTemplateModal';
+import AddTemplateModal, {
+  type TemplateFormValues,
+  type TemplateDraft,
+  type TemplatePickOption,
+} from './AddTemplateModal';
 import {
   loadStoredReplyTemplates,
   persistStoredReplyTemplates,
   type StoredReplyTemplate,
 } from '@/src/lib/replyTemplatesStore';
+import { useAuth } from '@/src/hooks/useAuth';
+import {
+  fetchRoutingRuleOptions,
+  intellideskConfigured,
+  intellideskTenantId,
+  intellideskUserIdForApi,
+  type ApiRoutingRuleOptions,
+} from '@/src/services/intellideskApi';
+import {
+  ROUTING_AFTER_SALES_TYPE_OPTIONS,
+  ROUTING_DEMO_CHANNELS,
+  routingAfterSalesLabel,
+} from '@/src/lib/routingRuleOptions';
+import {
+  parseReplyTemplatesImportCsv,
+  triggerReplyTemplatesImportTemplateDownload,
+} from '@/src/lib/replyTemplatesImportExport';
 
 interface Template {
   id: string;
@@ -20,17 +41,15 @@ interface Template {
   status: 'active' | 'draft';
 }
 
-const CATEGORY_LABELS: Record<string, string> = {
-  logistics: '物流问题',
-  after_sales_refund: '售后退款',
-  quality: '质量问题',
-  wrong_item: '发错货',
-  missing_part: '少发漏发',
-  not_received: '未收到货',
-  customer_reason: '客户原因/不想要了',
-  invoice: '发票相关',
-  marketing: '营销关怀',
-};
+function mergePickOption(
+  base: TemplatePickOption[],
+  current: string | undefined,
+  orphanSuffix: string
+): TemplatePickOption[] {
+  if (!current) return base;
+  if (base.some((o) => o.value === current)) return base;
+  return [{ value: current, label: `${current}${orphanSuffix}` }, ...base];
+}
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -54,6 +73,8 @@ function templateToDraft(t: Template): TemplateDraft {
 }
 
 export default function TemplatesPage() {
+  const { user } = useAuth();
+  const importInputRef = useRef<HTMLInputElement>(null);
   const [templates, setTemplates] = useState<Template[]>(() =>
     loadStoredReplyTemplates() as Template[]
   );
@@ -65,6 +86,73 @@ export default function TemplatesPage() {
     platform: '',
     category: '',
   });
+
+  const routingApi = useMemo(
+    () =>
+      intellideskConfigured()
+        ? { tenantId: intellideskTenantId(), userId: intellideskUserIdForApi(user?.id) }
+        : undefined,
+    [user?.id]
+  );
+
+  const [ruleOptions, setRuleOptions] = useState<ApiRoutingRuleOptions>({
+    platforms: [],
+    channels: ROUTING_DEMO_CHANNELS,
+    afterSalesTypes: ROUTING_AFTER_SALES_TYPE_OPTIONS,
+  });
+
+  const loadRoutingOptions = useCallback(async () => {
+    const tid = routingApi?.tenantId;
+    const uid = routingApi?.userId;
+    if (!tid) {
+      setRuleOptions({
+        platforms: [],
+        channels: ROUTING_DEMO_CHANNELS,
+        afterSalesTypes: ROUTING_AFTER_SALES_TYPE_OPTIONS,
+      });
+      return;
+    }
+    try {
+      const data = await fetchRoutingRuleOptions(tid, uid);
+      setRuleOptions({
+        platforms: data.platforms,
+        channels: data.channels.length ? data.channels : ROUTING_DEMO_CHANNELS,
+        afterSalesTypes: data.afterSalesTypes.length ? data.afterSalesTypes : ROUTING_AFTER_SALES_TYPE_OPTIONS,
+      });
+    } catch {
+      setRuleOptions({
+        platforms: [],
+        channels: ROUTING_DEMO_CHANNELS,
+        afterSalesTypes: ROUTING_AFTER_SALES_TYPE_OPTIONS,
+      });
+    }
+  }, [routingApi?.tenantId, routingApi?.userId]);
+
+  useEffect(() => {
+    void loadRoutingOptions();
+  }, [loadRoutingOptions]);
+
+  const channelPickOptions = useMemo((): TemplatePickOption[] => {
+    const opts: TemplatePickOption[] = [{ value: 'All', label: '所有平台' }];
+    for (const c of ruleOptions.channels) {
+      opts.push({ value: c.displayName, label: c.displayName });
+    }
+    return opts;
+  }, [ruleOptions.channels]);
+
+  const afterSalesTypePickOptions = useMemo((): TemplatePickOption[] => {
+    return ruleOptions.afterSalesTypes.map((o) => ({ value: o.value, label: o.label }));
+  }, [ruleOptions.afterSalesTypes]);
+
+  const modalChannelOptions = useMemo(
+    () => mergePickOption(channelPickOptions, editingTemplate?.platform, '（未在同步渠道中）'),
+    [channelPickOptions, editingTemplate?.platform]
+  );
+
+  const modalAfterSalesOptions = useMemo(
+    () => mergePickOption(afterSalesTypePickOptions, editingTemplate?.categoryValue, '（未在类型列表中）'),
+    [afterSalesTypePickOptions, editingTemplate?.categoryValue]
+  );
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
@@ -96,8 +184,9 @@ export default function TemplatesPage() {
   };
 
   const handleSave = (values: TemplateFormValues, editingId?: string) => {
-    const categoryLabel = CATEGORY_LABELS[values.category] ?? values.category;
+    const categoryLabel = routingAfterSalesLabel(values.category);
     const updatedAt = todayStr();
+    const languages = ['ZH'];
 
     if (editingId) {
       setTemplates((prev) => {
@@ -110,7 +199,7 @@ export default function TemplatesPage() {
                 category: categoryLabel,
                 categoryValue: values.category,
                 content: values.content,
-                languages: values.languages.length ? values.languages : [values.language],
+                languages,
                 status: values.status,
                 updatedAt,
               }
@@ -132,7 +221,7 @@ export default function TemplatesPage() {
           category: categoryLabel,
           categoryValue: values.category,
           content: values.content,
-          languages: values.languages.length ? values.languages : [values.language],
+          languages,
           status: values.status,
           updatedAt,
         },
@@ -168,23 +257,88 @@ export default function TemplatesPage() {
     });
   };
 
+  const handleDownloadImportTemplate = () => {
+    triggerReplyTemplatesImportTemplateDownload();
+  };
+
+  const handleImportFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = typeof reader.result === 'string' ? reader.result : '';
+      const parseResult = parseReplyTemplatesImportCsv(text);
+      if (parseResult.ok === false) {
+        window.alert(parseResult.error);
+        return;
+      }
+      const importedRows = parseResult.rows;
+      setTemplates((prev) => {
+        const added: Template[] = importedRows.map((row) => ({
+          id: newTemplateId(),
+          name: row.name,
+          platform: row.platform,
+          categoryValue: row.categoryValue,
+          category: routingAfterSalesLabel(row.categoryValue),
+          content: row.content,
+          languages: ['ZH'],
+          status: row.status,
+          updatedAt: todayStr(),
+        }));
+        const next = [...prev, ...added];
+        persistStoredReplyTemplates(next as StoredReplyTemplate[]);
+        return next;
+      });
+      window.alert(`已导入 ${importedRows.length} 条模板（已追加到列表末尾）。`);
+    };
+    reader.onerror = () => window.alert('读取文件失败，请重试。');
+    reader.readAsText(file, 'UTF-8');
+  };
+
   return (
     <div className="flex-1 overflow-y-auto bg-slate-50 p-8">
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">模板管理</h1>
-            <p className="text-sm text-slate-500 mt-1">管理多平台、多语言的客服回复模板</p>
+            <p className="text-sm text-slate-500 mt-1">管理快捷回复模板，可按渠道与类型筛选，支持 CSV 批量导入。</p>
           </div>
-          <button
-            type="button"
-            onClick={openNew}
-            className="flex items-center gap-2 px-4 py-2 bg-[#F97316] hover:bg-orange-600 text-white rounded-xl text-sm font-bold transition-colors shadow-sm"
-          >
-            <Plus className="w-4 h-4" />
-            新建模板
-          </button>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleDownloadImportTemplate}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-sm font-bold transition-colors shadow-sm"
+            >
+              <Download className="w-4 h-4" />
+              下载导入模版
+            </button>
+            <button
+              type="button"
+              onClick={() => importInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl text-sm font-bold transition-colors shadow-sm"
+            >
+              <Upload className="w-4 h-4" />
+              导入模版
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              aria-label="选择要导入的 CSV 模版文件"
+              onChange={handleImportFileChange}
+            />
+            <button
+              type="button"
+              onClick={openNew}
+              className="flex items-center gap-2 px-4 py-2 bg-[#F97316] hover:bg-orange-600 text-white rounded-xl text-sm font-bold transition-colors shadow-sm"
+            >
+              <Plus className="w-4 h-4" />
+              新建模板
+            </button>
+          </div>
         </div>
 
         {/* Filters & Search */}
@@ -228,35 +382,34 @@ export default function TemplatesPage() {
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-slate-500">平台</label>
                       <select
+                        aria-label="按渠道筛选模板"
                         value={filters.platform}
                         onChange={(e) => setFilters({ ...filters, platform: e.target.value })}
                         className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
                       >
                         <option value="">全部</option>
-                        <option value="All">所有平台</option>
-                        <option value="Amazon">Amazon</option>
-                        <option value="eBay">eBay</option>
-                        <option value="Shopify">Shopify</option>
+                        {channelPickOptions.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
                       </select>
                     </div>
 
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-slate-500">售后类型</label>
                       <select
+                        aria-label="按售后类型筛选模板"
                         value={filters.category}
                         onChange={(e) => setFilters({ ...filters, category: e.target.value })}
                         className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
                       >
                         <option value="">全部</option>
-                        <option value="logistics">物流问题</option>
-                        <option value="after_sales_refund">售后退款</option>
-                        <option value="quality">质量问题</option>
-                        <option value="wrong_item">发错货</option>
-                        <option value="missing_part">少发漏发</option>
-                        <option value="not_received">未收到货</option>
-                        <option value="customer_reason">客户原因</option>
-                        <option value="invoice">发票相关</option>
-                        <option value="marketing">营销关怀</option>
+                        {afterSalesTypePickOptions.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -292,7 +445,7 @@ export default function TemplatesPage() {
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
               <tr>
                 <th className="px-6 py-4 font-medium">模板名称</th>
-                <th className="px-6 py-4 font-medium">适用平台</th>
+                <th className="px-6 py-4 font-medium">适用渠道</th>
                 <th className="px-6 py-4 font-medium">
                   <div className="flex items-center gap-1.5">
                     售后类型
@@ -310,7 +463,6 @@ export default function TemplatesPage() {
                     </div>
                   </div>
                 </th>
-                <th className="px-6 py-4 font-medium">支持语言</th>
                 <th className="px-6 py-4 font-medium">状态</th>
                 <th className="px-6 py-4 font-medium">更新时间</th>
                 <th className="px-6 py-4 font-medium text-right">操作</th>
@@ -337,21 +489,6 @@ export default function TemplatesPage() {
                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
                         AI 意图关联
                       </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-1">
-                      <Globe className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                      <div className="flex flex-wrap gap-1">
-                        {template.languages.map((lang) => (
-                          <span
-                            key={lang}
-                            className="text-xs font-medium text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded"
-                          >
-                            {lang}
-                          </span>
-                        ))}
-                      </div>
                     </div>
                   </td>
                   <td className="px-6 py-4">
@@ -409,6 +546,8 @@ export default function TemplatesPage() {
         isOpen={isAddModalOpen}
         onClose={closeModal}
         editingTemplate={editingTemplate}
+        channelPickOptions={modalChannelOptions}
+        afterSalesTypeOptions={modalAfterSalesOptions}
         onSave={handleSave}
       />
     </div>
