@@ -13,11 +13,16 @@ Tenant 1 — * Order
 Tenant 1 — * Ticket
 Tenant 1 — * AfterSalesRecord
 Tenant 1 — * SlaRule / AutoReplyRule / TicketRoutingRule
+Tenant 1 — * TenantSyncState
+Tenant 1 — 1 TenantSyncSettings
+
+User 1 — 0..1 AgentSeat (optional userId)
 
 Customer 1 — * Order
 Customer 1 — * Ticket
 Channel  1 — * Order
 Channel  1 — * Ticket
+Order    1 — * OrderItem
 Order    1 — * LogisticsEvent
 Order    1 — * Ticket (optional)
 Order    1 — * AfterSalesRecord
@@ -39,6 +44,11 @@ Ticket   1 — * AfterSalesRecord
 | Message.senderType | Message.senderType | 含 manager |
 | Message 扩展字段 | translatedContent, sentPlatformText, deliveryTargets, attachments | |
 | AfterSalesRecord | AfterSalesRecord | type/status/priority 枚举化 |
+| Order 行项目 | OrderItem | sku/title/ean/quantity/price/currency |
+| 租户同步策略 | TenantSyncSettings | 轮询间隔、回填、水位开关等 |
+| 同步水位 | TenantSyncState | tenantId + scope + lastWatermarkAt |
+| 坐席 ↔ 用户 | AgentSeat.userId → User | 可选强关联；email 仍用于业务对齐 |
+| 软删除 | Order/Ticket/AfterSalesRecord.deletedAt | 可选时间戳 |
 
 ## 租户
 

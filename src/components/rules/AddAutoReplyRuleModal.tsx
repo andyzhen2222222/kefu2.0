@@ -1,21 +1,35 @@
-import { X, MessageSquare, Clock, Tag, Search } from 'lucide-react';
+import { X, ShoppingBag, Clock, Tag, Search, FileText } from 'lucide-react';
 import { useState, useMemo, useEffect } from 'react';
 import { cn } from '@/src/lib/utils';
 import { MOCK_TEMPLATES } from '@/src/data/demoTemplates';
 import { DEMO_KB_SNIPPETS_FOR_IMPORT } from '@/src/data/demoKnowledgeSnippets';
+import { ROUTING_AFTER_SALES_TYPE_OPTIONS } from '@/src/lib/routingRuleOptions';
+import type { ApiAutoReplyRuleRow } from '@/src/services/intellideskApi';
 
 export type NewAutoReplyRulePayload = {
   name: string;
   intentMatch: string | null;
   keywords: string[];
+  replyContent: string;
   markRepliedOnSend: boolean;
 };
+
+export type AutoReplyRuleSavePayload = NewAutoReplyRulePayload & { ruleId?: string };
 
 interface AddAutoReplyRuleModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit?: (payload: NewAutoReplyRulePayload) => Promise<void>;
+  /** 传入则从该规则预填表单（编辑模式） */
+  initialRule?: ApiAutoReplyRuleRow | null;
+  onSubmit?: (payload: AutoReplyRuleSavePayload) => Promise<void>;
   submitting?: boolean;
+}
+
+function isLegacyIntentRule(rule: ApiAutoReplyRuleRow): boolean {
+  const im = rule.intentMatch?.trim() ?? '';
+  if (!im) return false;
+  if (im.startsWith('__time__:') || im.startsWith('__after_sales_type__:')) return false;
+  return !(rule.keywords?.length);
 }
 
 function appendToReply(prev: string, chunk: string) {
@@ -27,6 +41,7 @@ function appendToReply(prev: string, chunk: string) {
 export default function AddAutoReplyRuleModal({
   isOpen,
   onClose,
+  initialRule = null,
   onSubmit,
   submitting = false,
 }: AddAutoReplyRuleModalProps) {
@@ -35,7 +50,11 @@ export default function AddAutoReplyRuleModal({
   const [templateContent, setTemplateContent] = useState('');
   const [keywordsText, setKeywordsText] = useState('');
   const [timePreset, setTimePreset] = useState('weekend');
-  const [intentKey, setIntentKey] = useState('urge_ship');
+  const [timeStart, setTimeStart] = useState('18:00');
+  const [timeEnd, setTimeEnd] = useState('09:00');
+  const [afterSalesTypeKey, setAfterSalesTypeKey] = useState('logistics');
+  const [legacyIntentText, setLegacyIntentText] = useState('');
+  const [hadLegacySource, setHadLegacySource] = useState(false);
   const [markReplied, setMarkReplied] = useState(true);
   const [kbPickerOpen, setKbPickerOpen] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
@@ -72,36 +91,106 @@ export default function AddAutoReplyRuleModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    setRuleName('');
-    setTriggerType('time');
-    setTemplateContent('');
-    setKeywordsText('');
-    setTimePreset('weekend');
-    setIntentKey('urge_ship');
-    setMarkReplied(true);
-  }, [isOpen]);
+    if (initialRule) {
+      setRuleName(initialRule.name);
+      setTemplateContent(initialRule.replyContent ?? '');
+      setMarkReplied(initialRule.markRepliedOnSend);
+      const kws = initialRule.keywords ?? [];
+      const im = initialRule.intentMatch ?? '';
+      if (kws.length > 0) {
+        setTriggerType('keyword');
+        setKeywordsText(kws.join(', '));
+        setTimePreset('weekend');
+        setTimeStart('18:00');
+        setTimeEnd('09:00');
+        setAfterSalesTypeKey('logistics');
+        setHadLegacySource(false);
+        setLegacyIntentText('');
+      } else if (im.startsWith('__time__:')) {
+        setTriggerType('time');
+        const rest = im.slice('__time__:'.length);
+        const idx = rest.indexOf(':');
+        const preset = idx === -1 ? rest : rest.slice(0, idx);
+        const times = idx === -1 ? '' : rest.slice(idx + 1);
+        setTimePreset(['weekend', 'weekday', 'daily'].includes(preset) ? preset : 'weekend');
+        const [ts, te] = times.split('-');
+        setTimeStart(ts?.trim() || '18:00');
+        setTimeEnd(te?.trim() || '09:00');
+        setKeywordsText('');
+        setHadLegacySource(false);
+        setLegacyIntentText('');
+      } else if (im.startsWith('__after_sales_type__:')) {
+        setTriggerType('after_sales_type');
+        const v = im.slice('__after_sales_type__:'.length);
+        const valid = ROUTING_AFTER_SALES_TYPE_OPTIONS.some((o) => o.value === v);
+        setAfterSalesTypeKey(valid ? v : ROUTING_AFTER_SALES_TYPE_OPTIONS[0].value);
+        setKeywordsText('');
+        setHadLegacySource(false);
+        setLegacyIntentText('');
+      } else if (im.trim()) {
+        setTriggerType('legacy_intent');
+        setLegacyIntentText(im.trim());
+        setHadLegacySource(isLegacyIntentRule(initialRule));
+        setKeywordsText('');
+      } else {
+        setTriggerType('time');
+        setTimePreset('weekend');
+        setTimeStart('18:00');
+        setTimeEnd('09:00');
+        setKeywordsText('');
+        setAfterSalesTypeKey('logistics');
+        setHadLegacySource(false);
+        setLegacyIntentText('');
+      }
+    } else {
+      setRuleName('');
+      setTriggerType('time');
+      setTemplateContent('');
+      setKeywordsText('');
+      setTimePreset('weekend');
+      setTimeStart('18:00');
+      setTimeEnd('09:00');
+      setAfterSalesTypeKey('logistics');
+      setHadLegacySource(false);
+      setLegacyIntentText('');
+      setMarkReplied(true);
+    }
+  }, [isOpen, initialRule]);
 
   const handleSubmit = async () => {
     const name = ruleName.trim();
     if (!name) return;
+    if (onSubmit && !templateContent.trim()) {
+      window.alert('请填写自动回复正文');
+      return;
+    }
+    if (triggerType === 'legacy_intent' && !legacyIntentText.trim()) {
+      window.alert('请填写意图标签');
+      return;
+    }
     let intentMatch: string | null = null;
     let keywords: string[] = [];
     if (triggerType === 'time') {
-      intentMatch = `__time__:${timePreset}`;
+      intentMatch = `__time__:${timePreset}:${timeStart}-${timeEnd}`;
     } else if (triggerType === 'keyword') {
       keywords = keywordsText
         .split(/[,，]/)
         .map((s) => s.trim())
         .filter(Boolean);
-    } else {
-      intentMatch = intentKey;
+    } else if (triggerType === 'after_sales_type') {
+      intentMatch = `__after_sales_type__:${afterSalesTypeKey}`;
+    } else if (triggerType === 'legacy_intent') {
+      intentMatch = legacyIntentText.trim() || null;
+      keywords = [];
     }
     if (onSubmit) {
       await onSubmit({
         name,
         intentMatch,
         keywords,
+        replyContent: templateContent,
         markRepliedOnSend: markReplied,
+        ruleId: initialRule?.id,
       });
     }
     handleClose();
@@ -109,11 +198,16 @@ export default function AddAutoReplyRuleModal({
 
   if (!isOpen) return null;
 
+  const isEdit = Boolean(initialRule);
+  const showLegacyTab = hadLegacySource;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <h2 className="text-lg font-bold text-slate-900">新增自动回复规则</h2>
+          <h2 className="text-lg font-bold text-slate-900">
+            {isEdit ? '编辑自动回复规则' : '新增自动回复规则'}
+          </h2>
           <button
             type="button"
             onClick={handleClose}
@@ -138,7 +232,12 @@ export default function AddAutoReplyRuleModal({
 
             <div className="space-y-3">
               <label className="text-sm font-bold text-slate-700">触发条件</label>
-              <div className="grid grid-cols-3 gap-3">
+              <div
+                className={cn(
+                  'grid gap-3',
+                  showLegacyTab ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'
+                )}
+              >
                 <button
                   type="button"
                   onClick={() => setTriggerType('time')}
@@ -167,17 +266,32 @@ export default function AddAutoReplyRuleModal({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setTriggerType('intent')}
+                  onClick={() => setTriggerType('after_sales_type')}
                   className={cn(
                     'flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all',
-                    triggerType === 'intent'
+                    triggerType === 'after_sales_type'
                       ? 'border-[#F97316] bg-orange-50/50 text-[#F97316]'
                       : 'border-slate-200 hover:border-slate-300 text-slate-600'
                   )}
                 >
-                  <MessageSquare className="w-6 h-6" />
-                  <span className="text-sm font-medium">AI 意图识别</span>
+                  <ShoppingBag className="w-6 h-6" />
+                  <span className="text-sm font-medium">售后类型</span>
                 </button>
+                {showLegacyTab && (
+                  <button
+                    type="button"
+                    onClick={() => setTriggerType('legacy_intent')}
+                    className={cn(
+                      'flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all',
+                      triggerType === 'legacy_intent'
+                        ? 'border-[#F97316] bg-orange-50/50 text-[#F97316]'
+                        : 'border-slate-200 hover:border-slate-300 text-slate-600'
+                    )}
+                  >
+                    <FileText className="w-6 h-6" />
+                    <span className="text-sm font-medium text-center leading-tight">意图直配（旧）</span>
+                  </button>
+                )}
               </div>
 
               {triggerType === 'time' && (
@@ -200,13 +314,15 @@ export default function AddAutoReplyRuleModal({
                       <div className="flex items-center gap-2">
                         <input
                           type="time"
-                          defaultValue="18:00"
+                          value={timeStart}
+                          onChange={(e) => setTimeStart(e.target.value)}
                           className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
                         />
                         <span className="text-slate-400">-</span>
                         <input
                           type="time"
-                          defaultValue="09:00"
+                          value={timeEnd}
+                          onChange={(e) => setTimeEnd(e.target.value)}
                           className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
                         />
                       </div>
@@ -223,30 +339,59 @@ export default function AddAutoReplyRuleModal({
                     </label>
                     <input
                       type="text"
-                      placeholder="例如：退款, 发票, 物流"
+                      placeholder="例如：refund, 退款, remboursement"
                       className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
                       value={keywordsText}
                       onChange={(e) => setKeywordsText(e.target.value)}
                     />
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      匹配方式：对买家消息做<strong>子串匹配</strong>（不区分大小写），<strong>不是</strong>整句语义理解，也<strong>不是</strong>整词精确匹配。
+                      各平台语言不同可并列多条关键词（中/英/德等），例如：
+                      <span className="font-mono text-slate-600"> refund,退款,remboursement </span>
+                      。需要按业务类目命中时，请优先用「售后类型」（依赖工单上已归类的意图标签）。
+                    </p>
                   </div>
                 </div>
               )}
 
-              {triggerType === 'intent' && (
+              {triggerType === 'after_sales_type' && (
                 <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-4 mt-2 animate-in fade-in">
                   <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-500">选择 AI 识别的意图</label>
+                    <label className="text-xs font-medium text-slate-500">售后类型</label>
                     <select
+                      aria-label="售后类型"
                       className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
-                      value={intentKey}
-                      onChange={(e) => setIntentKey(e.target.value)}
+                      value={afterSalesTypeKey}
+                      onChange={(e) => setAfterSalesTypeKey(e.target.value)}
                     >
-                      <option value="urge_ship">催发货</option>
-                      <option value="change_address">修改地址</option>
-                      <option value="return_refund">退货退款</option>
-                      <option value="invoice">索要发票</option>
-                      <option value="product_qa">产品咨询</option>
+                      {ROUTING_AFTER_SALES_TYPE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
                     </select>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      与「分配规则 / 字段管理」中的售后类型字典一致。命中条件为：工单上由 AI
+                      归类后的<strong>意图标签</strong>（中文）属于该类型对应范围；若尚未跑意图分类，请先同步或刷新工单意图后再试。
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {triggerType === 'legacy_intent' && (
+                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-4 mt-2 animate-in fade-in">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-slate-500">工单意图标签（须与 AI 归类结果逐字一致）</label>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
+                      value={legacyIntentText}
+                      onChange={(e) => setLegacyIntentText(e.target.value)}
+                      placeholder="例如：物流查询"
+                    />
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      为兼容早期规则保留。新建规则请优先使用「售后类型」。
+                    </p>
                   </div>
                 </div>
               )}
@@ -348,7 +493,7 @@ export default function AddAutoReplyRuleModal({
             onClick={() => void handleSubmit()}
             className="px-5 py-2.5 bg-[#F97316] text-white rounded-xl text-sm font-bold hover:bg-[#ea580c] transition-colors shadow-sm disabled:opacity-50"
           >
-            {submitting ? '保存中…' : '保存规则'}
+            {submitting ? '保存中…' : isEdit ? '保存修改' : '保存规则'}
           </button>
         </div>
       </div>
@@ -464,7 +609,7 @@ export default function AddAutoReplyRuleModal({
                       <div className="flex items-center justify-between gap-2 mb-1">
                         <span className="text-xs font-bold text-slate-800 line-clamp-1">{t.title}</span>
                         <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
-                          {t.platform}
+                          {t.platforms?.join(', ')}
                         </span>
                       </div>
                       <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">{t.content}</p>

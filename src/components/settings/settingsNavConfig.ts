@@ -14,7 +14,7 @@ export interface SettingsNavItem {
   icon: LucideIcon;
   label: string;
   path: string;
-  /** 仅租户管理员可见（坐席、角色、工单分配） */
+  /** 仅管理员可见 */
   adminOnly?: boolean;
 }
 

@@ -4,9 +4,10 @@
  * - 默认：未设 `VITE_API_BASE_URL` → 演示/mock 数据。
  * - 显式：`VITE_INTELLIDESK_DATA_SOURCE=mock` 时强制 mock（即使误配了 API 地址）。
  * - 联调：`VITE_INTELLIDESK_DATA_SOURCE=api` 且配置 `VITE_API_BASE_URL`。
- * 本地端口：`npm run dev` / `dev:mock` → UI :3000（mock）；`dev:api` / `dev:live` → UI :4000 代理到后端 :4001。
+ * 本地端口：`npm run dev` / `dev:mock` → UI :3000（mock）；`dev:api` / `dev:live` → UI :4001 代理到后端 :4000。
  */
-import type { AfterSalesRecord, Customer, Message, Order, Ticket } from '@/src/types';
+import { enrichOrderStoreEntityWithNezha } from '@/src/lib/shippingAddressText';
+import type { AfterSalesRecord, Customer, Message, Order, Ticket, User } from '@/src/types';
 import {
   LogisticsStatus,
   Sentiment,
@@ -15,6 +16,20 @@ import {
 } from '@/src/types';
 
 const base = () => (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+
+/**
+ * 拼接后端 API URL。联调站点根应为 `http://localhost:4001`（由 Vite 代理 /api 至后端 :4000）；
+ * 若误配为 `.../api` 则不再重复拼一段 `/api`。
+ */
+export function resolveApiUrl(pathAfterApi: string): string {
+  const raw = base().replace(/\/$/, '');
+  if (!raw) return '';
+  const tail = pathAfterApi.replace(/^\//, '');
+  if (raw.toLowerCase().endsWith('/api')) {
+    return `${raw}/${tail}`;
+  }
+  return `${raw}/api/${tail}`;
+}
 
 function intellideskDataSourceExplicit(): 'mock' | 'api' | '' {
   const v = (import.meta.env.VITE_INTELLIDESK_DATA_SOURCE ?? '').trim().toLowerCase();
@@ -29,6 +44,10 @@ export const DEFAULT_DEMO_USER_ID = '22222222-2222-4222-8222-222222222222';
 
 /** 是否使用自建后端（非演示数据） */
 export function intellideskConfigured(): boolean {
+  // 检查 URL 参数，如果带了 ?live=1 强制进入 API 模式，最高优先级
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('live') === '1') return true;
+
   const explicit = intellideskDataSourceExplicit();
   if (explicit === 'mock') return false;
   if (explicit === 'api') return Boolean(base());
@@ -40,7 +59,16 @@ export function intellideskMockMode(): boolean {
   return !intellideskConfigured();
 }
 
+/** 优先本地存储的工作区 ID，再环境变量，最后 seed 默认 */
 export function intellideskTenantId(): string {
+  if (typeof window !== 'undefined') {
+    try {
+      const fromLs = localStorage.getItem('intellidesk_tenant_id')?.trim();
+      if (fromLs) return fromLs;
+    } catch {
+      /* ignore */
+    }
+  }
   return (import.meta.env.VITE_INTELLIDESK_TENANT_ID ?? '').trim() || DEFAULT_DEMO_TENANT_ID;
 }
 
@@ -89,6 +117,60 @@ export async function intellideskHeadersWithAuth(
   return h;
 }
 
+/**
+ * 联调：按登录框输入解析租户内用户（管理员用邮箱；坐席用与后台「登录账号」或邮箱一致的字符串）。
+ * 对应后端 POST /api/auth/session-from-account（非 production 或 ALLOW_ACCOUNT_SESSION=1）。
+ */
+export async function resolveSessionUserFromAccount(
+  tenantId: string,
+  account: string | undefined
+): Promise<{ user: User } | { user: null; error: string }> {
+  if (!base()) return { user: null, error: '未配置 VITE_API_BASE_URL' };
+  const body = JSON.stringify({ account: account ?? '' });
+  const headers = { 'Content-Type': 'application/json', 'X-Tenant-Id': tenantId };
+
+  let url = resolveApiUrl('auth/session-from-account');
+  let res = await fetch(url, { method: 'POST', headers, body });
+  if (res.status === 404) {
+    const alt = resolveApiUrl('settings/session-from-account');
+    if (alt !== url) {
+      res = await fetch(alt, { method: 'POST', headers, body });
+      url = alt;
+    }
+  }
+  const text = await res.text();
+  let data: { user?: User; message?: string; error?: string } = {};
+  try {
+    if (text) data = JSON.parse(text) as typeof data;
+  } catch {
+    /* 可能是代理/HTML 错误页 */
+  }
+  if (!res.ok) {
+    const fromBody =
+      (typeof data.message === 'string' && data.message) ||
+      (typeof data.error === 'string' && data.error) ||
+      '';
+    if (fromBody) return { user: null, error: fromBody };
+    if (res.status === 403) {
+      return {
+        user: null,
+        error: '服务端未开启按账号登录（生产环境需设置 ALLOW_ACCOUNT_SESSION=1）',
+      };
+    }
+    if (res.status === 404) {
+      return {
+        user: null,
+        error:
+          '登录接口返回 404：请确认 ① 后端已用当前代码重启（含 POST /api/auth/session-from-account）；② VITE_API_BASE_URL 为站点根（联调如 http://localhost:4001），不要写成 …/api；③ 租户 ID 与数据库一致。',
+      };
+    }
+    return { user: null, error: `请求失败（${res.status}）` };
+  }
+  const u = data.user;
+  if (!u?.id || !u.role) return { user: null, error: '登录响应格式异常' };
+  return { user: u };
+}
+
 export function intellideskWsUrl(tenantId: string): string | null {
   const b = base();
   if (!b) return null;
@@ -102,14 +184,124 @@ export function intellideskWsUrl(tenantId: string): string | null {
   return `${proto}//${u.host}/ws?tenantId=${encodeURIComponent(tenantId)}`;
 }
 
+let globalApiError: string | null = null;
+const errorListeners = new Set<(err: string | null) => void>();
+
+export function setGlobalApiError(err: string | null) {
+  globalApiError = err;
+  errorListeners.forEach((l) => l(err));
+}
+
+export function subscribeToGlobalApiError(l: (err: string | null) => void) {
+  errorListeners.add(l);
+  return () => {
+    errorListeners.delete(l);
+  };
+}
+
+export function getGlobalApiError() {
+  return globalApiError;
+}
+
 async function parseError(res: Response): Promise<string> {
   const t = await res.text();
   try {
     const j = JSON.parse(t) as { message?: string; error?: string };
-    return j.message || j.error || t || res.statusText;
-  } catch {
+    const msg = j.message || j.error;
+    if (msg) {
+      if (res.status === 503) {
+        return `后端暂时不可用（503）：${msg}。若使用 Docker 数据库：先启动 Docker Desktop，再在项目根目录执行 npm run dev:stack，然后 backend 终端 npm run dev、根目录 npm run dev:api。`;
+      }
+      if (res.status >= 500) {
+        return `服务异常（${res.status}）：${msg}。请确认 4000 为后端（非 Vite）、PostgreSQL 已启动；可在 backend 执行 npx prisma db push 与 npm run db:seed，或根目录 npm run dev:stack。`;
+      }
+      if (res.status === 401 || res.status === 403) {
+        return `鉴权失败（${res.status}）：${msg}`;
+      }
+      return msg;
+    }
     return t || res.statusText;
+  } catch {
+    if (res.status === 502 || res.status === 504) {
+      return `网关超时或无法连接后端（${res.status}）。请另开终端 cd backend && npm run dev（默认 4000），并确认本机 netstat 中 4000 为 LISTENING；前端保持 npm run dev:api 占 4001。`;
+    }
+    const raw = (t || '').trim();
+    const looksHtml = raw.startsWith('<!') || raw.toLowerCase().includes('<html');
+    if (
+      res.status === 500 &&
+      (looksHtml || !raw || raw === 'Internal Server Error')
+    ) {
+      return '后端未响应或返回了非 JSON（多为 4000 上没有跑 Express）。请：① 另开终端 cd backend && npm run dev；② 若 Prisma 报连不上库，在项目根目录执行 npm run dev:stack 启动 Docker 里的 Postgres；③ 用 netstat -ano | findstr :4000 确认 4000 在监听（只有 4001 没有 4000 时一定会失败）。';
+    }
+    return raw || res.statusText;
   }
+}
+
+/** 将 fetch 错误与 HTTP 错误统一成可读文案 */
+export function intellideskFetchErrorMessage(e: unknown): string {
+  if (e instanceof TypeError && (e.message.includes('fetch') || e.message.includes('Failed'))) {
+    return '无法连接后端：浏览器显示 Failed to fetch 时，多为后端 4000 未监听或 tsx watch 正在重启（Vite 代理会短暂 ECONNREFUSED）。请在 backend 目录执行 npm run dev，看到「IntelliDesk API http://localhost:4000」后再提交；开发时避免在提交瞬间保存后端文件触发重启。';
+  }
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'object' && e !== null) return JSON.stringify(e);
+  return String(e);
+}
+
+/**
+ * 设置页「坐席同步」等：顶栏只显示短句，长诊断收进 details，避免整屏琥珀条。
+ */
+export function splitSeatSyncApiError(detail: string): { summary: string; detail: string } {
+  const d = detail.trim();
+  if (!d) return { summary: '坐席列表暂时无法更新', detail: '' };
+  if (d.includes('无法连接后端') || d.includes('Failed to fetch') || d.includes('ECONNREFUSED')) {
+    return {
+      summary: '无法连接后端：请先在 backend 目录执行 npm run dev（默认监听 4000），前端使用 npm run dev:api（4001 代理到 4000）。',
+      detail: d,
+    };
+  }
+  if (d.includes('非 JSON') || (d.includes('4000') && d.includes('Express'))) {
+    return {
+      summary: '后端未返回有效接口数据：常见为 4000 未跑 API、或返回了 HTML 错误页；请确认仅后端占 4000、Vite 占 4001。',
+      detail: d,
+    };
+  }
+  if (d.includes('网关超时') || d.includes('502') || d.includes('504')) {
+    return { summary: '网关超时或暂时连不上后端，请稍后重试或检查 4000 是否在监听。', detail: d };
+  }
+  if (d.includes('鉴权失败') || d.includes('401') || d.includes('403')) {
+    return { summary: '鉴权失败，请重新登录或检查租户/用户请求头。', detail: d };
+  }
+  if (d.includes('503') || d.includes('暂时不可用')) {
+    return { summary: '后端暂时不可用，请确认数据库已启动（如 npm run dev:stack）后再试。', detail: d };
+  }
+  if (d.includes('服务异常') && d.includes('500')) {
+    return { summary: '后端报错，请查看 backend 终端日志并确认 PostgreSQL 可用。', detail: d };
+  }
+  if (d.length > 120) {
+    return { summary: `${d.slice(0, 120)}…`, detail: d };
+  }
+  return { summary: d, detail: '' };
+}
+
+/** AI 专用：短文案，适合顶栏/表单提示（不暴露堆栈） */
+export function formatAiUserVisibleError(e: unknown): string {
+  const raw = intellideskFetchErrorMessage(e);
+  const lower = raw.toLowerCase();
+  if (lower.includes('rate_limit') || lower.includes('too many ai') || raw.includes('429')) {
+    return 'AI 调用过于频繁，请稍后再试。';
+  }
+  if (
+    lower.includes('502') ||
+    lower.includes('503') ||
+    lower.includes('504') ||
+    lower.includes('网关') ||
+    lower.includes('doubao_http') ||
+    lower.includes('gemini_')
+  ) {
+    return 'AI 服务暂时不可用，请稍后重试或检查后端模型配置。';
+  }
+  if (raw.length > 200) return `${raw.slice(0, 200)}…`;
+  return raw;
 }
 
 // --- Raw DTOs (subset; aligned with backend mappers) ---
@@ -138,6 +330,9 @@ export type ApiTicketRaw = {
   tags: string[];
   assignedSeatId?: string | null;
   ownerUserId?: string | null;
+  channelDefaultCurrency?: string | null;
+  channelPlatformLanguage?: string | null;
+  motherConversationLinked?: boolean;
 };
 
 export type ApiMessageRaw = {
@@ -194,23 +389,70 @@ export type ApiOrderRaw = {
   refundStatus?: string | null;
   returnStatus?: string | null;
   logisticsStatus?: string | null;
+  logisticsPrimaryStatus?: string | null;
+  logisticsSecondaryStatus?: string | null;
+  logisticsStatusCode?: string | null;
+  logisticsSubStatusCode?: string | null;
+  isLogisticsException?: boolean;
+  logisticsLastSyncedAt?: string | null;
+  logisticsIsRegistered?: boolean;
   logisticsEvents?: ApiLogisticsEventRaw[];
   carrier?: string | null;
   hasVatInfo?: boolean;
+  eanList?: string[];
+  storeEntity?: any;
+  createdAt?: string;
+  updatedAt?: string;
+  /** 订单回源（如 Nezha）原始 JSON，可用于回填收货地址 */
+  nezhaRaw?: unknown;
+  nezhaSync?: boolean;
+};
+
+/** GET /api/tickets 列表项在 mapTicket 之外附带预览与客户/订单摘要 */
+export type ApiTicketListItemRaw = ApiTicketRaw & {
+  lastInboundPreview?: string | null;
+  customer?: ApiCustomerRaw | null;
+  order?: ApiOrderRaw | null;
 };
 
 export type ApiTicketDetail = ApiTicketRaw & {
   messages: ApiMessageRaw[];
+  /** 该工单消息总条数（可能大于本次返回的 messages 长度） */
+  messagesTotal?: number;
+  /** 本次请求使用的消息条数上限 */
+  messagesLimit?: number;
+  /** 为 false 时本次未附带 messages（首包瘦身，罕见） */
+  includeMessages?: boolean;
   customer: ApiCustomerRaw | null;
   order: ApiOrderRaw | null;
+};
+
+export type TicketMessagesPageResponse = {
+  messages: ApiMessageRaw[];
+  hasMore: boolean;
 };
 
 export type TicketsListResponse = {
   limit: number;
   cursor: string | null;
   nextCursor: string | null;
-  items: ApiTicketRaw[];
+  items: ApiTicketListItemRaw[];
 };
+
+/** 从详情消息列表得到最近一条买家可见正文（用于同步 lastInboundPreview） */
+export function lastCustomerMessagePreviewFromApi(
+  messages: ApiMessageRaw[],
+  maxLen = 240
+): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.senderType === 'customer' && !m.isInternal && m.content?.trim()) {
+      const c = m.content.trim();
+      return c.length > maxLen ? c.slice(0, maxLen) : c;
+    }
+  }
+  return null;
+}
 
 const SENTIMENT_VALUES = new Set<string>(Object.values(Sentiment));
 const TICKET_STATUS_VALUES = new Set<string>(Object.values(TicketStatus));
@@ -239,7 +481,7 @@ function mapLogisticsStatus(s: string | undefined): LogisticsStatus | undefined 
   return LogisticsStatus.NOT_FOUND;
 }
 
-export function mapApiTicketToUi(raw: ApiTicketRaw): Ticket {
+export function mapApiTicketToUi(raw: ApiTicketRaw & { lastInboundPreview?: string | null }): Ticket {
   return {
     id: raw.id,
     channelId: raw.channelId,
@@ -264,6 +506,10 @@ export function mapApiTicketToUi(raw: ApiTicketRaw): Ticket {
     tags: Array.isArray(raw.tags) ? raw.tags : [],
     assignedSeatId: raw.assignedSeatId ?? undefined,
     ownerUserId: raw.ownerUserId ?? undefined,
+    lastInboundPreview: raw.lastInboundPreview ?? undefined,
+    channelDefaultCurrency: raw.channelDefaultCurrency ?? undefined,
+    channelPlatformLanguage: raw.channelPlatformLanguage ?? undefined,
+    motherConversationLinked: raw.motherConversationLinked ?? undefined,
   };
 }
 
@@ -328,9 +574,24 @@ export function mapApiOrderToUi(raw: ApiOrderRaw): Order {
     refundStatus: raw.refundStatus ?? undefined,
     returnStatus: raw.returnStatus ?? undefined,
     logisticsStatus: mapLogisticsStatus(raw.logisticsStatus ?? undefined),
+    logisticsPrimaryStatus: raw.logisticsPrimaryStatus ?? undefined,
+    logisticsSecondaryStatus: raw.logisticsSecondaryStatus ?? undefined,
+    logisticsStatusCode: raw.logisticsStatusCode ?? undefined,
+    logisticsSubStatusCode: raw.logisticsSubStatusCode ?? undefined,
+    isLogisticsException: raw.isLogisticsException,
+    logisticsLastSyncedAt: raw.logisticsLastSyncedAt,
+    logisticsIsRegistered: raw.logisticsIsRegistered,
     logisticsEvents: events.length ? events : undefined,
     carrier: raw.carrier ?? undefined,
     hasVatInfo: raw.hasVatInfo,
+    eanList: raw.eanList,
+    storeEntity:
+      enrichOrderStoreEntityWithNezha({
+        storeEntity: raw.storeEntity,
+        nezhaRaw: raw.nezhaRaw,
+      }) ?? raw.storeEntity,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
   };
 }
 
@@ -350,16 +611,109 @@ export async function fetchTicketsList(
   return res.json() as Promise<TicketsListResponse>;
 }
 
+export type InboxTicketsSyncResult = {
+  success: boolean;
+  days: number;
+  /** 是否使用收件箱水位做增量起点（false 表示整窗重拉） */
+  incremental?: boolean;
+  /** 收件箱刷新时同步的订单条数（与工单关联依赖此项） */
+  ordersSynced: number;
+  conversationsSynced: number;
+  messagesSynced: number;
+  aiUpdated: number;
+  aiFailed: number;
+  aiSkippedNoLlm: number;
+};
+
+/** 收件箱：母系统会话+消息刷新，可选批量 AI 意图/情绪 */
+export async function postInboxTicketsSync(
+  tenantId: string,
+  userId: string | undefined,
+  body: { token?: string; days?: number; incremental?: boolean; runAi?: boolean; aiMax?: number }
+): Promise<InboxTicketsSyncResult> {
+  const payload: Record<string, unknown> = {
+    days: body.days ?? 90,
+    incremental: body.incremental !== false,
+    runAi: body.runAi !== false,
+    aiMax: body.aiMax ?? 30,
+  };
+  const t = body.token?.trim();
+  if (t) payload.token = t;
+  const res = await fetch(`${base()}/api/sync/inbox-tickets`, {
+    method: 'POST',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<InboxTicketsSyncResult>;
+}
+
+export type SyncOrderByPlatformIdResult =
+  | { success: true; platformOrderId: string }
+  | { success: false; ok: false; reason?: string };
+
+/** 按平台订单号从母系统回源并 upsert 本地订单 */
+export async function postSyncOrderByPlatformId(
+  tenantId: string,
+  userId: string | undefined,
+  body: { token?: string; platformOrderId: string }
+): Promise<SyncOrderByPlatformIdResult> {
+  const payload: Record<string, unknown> = { platformOrderId: body.platformOrderId.trim() };
+  const t = body.token?.trim();
+  if (t) payload.token = t;
+  const res = await fetch(`${base()}/api/sync/order-by-platform-id`, {
+    method: 'POST',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<SyncOrderByPlatformIdResult>;
+}
+
 export async function fetchTicketDetail(
   tenantId: string,
   userId: string | undefined,
-  ticketId: string
+  ticketId: string,
+  opts?: { messagesLimit?: number; includeMessages?: boolean }
 ): Promise<ApiTicketDetail> {
-  const res = await fetch(`${base()}/api/tickets/${ticketId}`, {
+  const path = `tickets/${encodeURIComponent(ticketId)}`;
+  const resolved = resolveApiUrl(path);
+  if (!resolved) {
+    throw new Error('未配置 VITE_API_BASE_URL，无法拉取工单详情');
+  }
+  const u = new URL(resolved);
+  if (opts?.messagesLimit != null && opts.messagesLimit > 0) {
+    u.searchParams.set('messagesLimit', String(opts.messagesLimit));
+  }
+  if (opts?.includeMessages === false) {
+    u.searchParams.set('includeMessages', '0');
+  }
+  const res = await fetch(u.toString(), {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<ApiTicketDetail>;
+}
+
+/** 分页加载早于当前列表的消息（before 为当前最早一条的 createdAt ISO） */
+export async function fetchTicketMessagesPage(
+  tenantId: string,
+  userId: string | undefined,
+  ticketId: string,
+  opts?: { before?: string; limit?: number }
+): Promise<TicketMessagesPageResponse> {
+  const resolved = resolveApiUrl(`tickets/${encodeURIComponent(ticketId)}/messages`);
+  if (!resolved) throw new Error('未配置 VITE_API_BASE_URL');
+  const u = new URL(resolved);
+  if (opts?.before) u.searchParams.set('before', opts.before);
+  if (opts?.limit != null && opts.limit > 0) {
+    u.searchParams.set('limit', String(opts.limit));
+  }
+  const res = await fetch(u.toString(), {
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<TicketMessagesPageResponse>;
 }
 
 export type PatchTicketBody = Partial<{
@@ -399,7 +753,8 @@ export type PostTicketMessageBody = {
   attachments?: string[];
   translatedContent?: string;
   sentPlatformText?: string;
-  deliveryTargets?: ('customer' | 'manager')[];
+  deliveryTargets?: ('customer' | 'manager' | 'agent')[];
+  token?: string;
 };
 
 export async function postTicketMessage(
@@ -415,6 +770,35 @@ export async function postTicketMessage(
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<ApiMessageRaw>;
+}
+
+export async function patchTicketMessage(
+  tenantId: string,
+  userId: string | undefined,
+  ticketId: string,
+  messageId: string,
+  body: { content: string }
+): Promise<ApiMessageRaw> {
+  const res = await fetch(`${base()}/api/tickets/${ticketId}/messages/${messageId}`, {
+    method: 'PATCH',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<ApiMessageRaw>;
+}
+
+export async function deleteTicketMessage(
+  tenantId: string,
+  userId: string | undefined,
+  ticketId: string,
+  messageId: string
+): Promise<void> {
+  const res = await fetch(`${base()}/api/tickets/${ticketId}/messages/${messageId}`, {
+    method: 'DELETE',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
 }
 
 export type AgentSeatRow = {
@@ -440,9 +824,12 @@ export async function fetchAgentSeats(
 export async function fetchOrderDetail(
   tenantId: string,
   userId: string | undefined,
-  orderId: string
+  orderId: string,
+  opts?: { upstreamEnrich?: boolean }
 ): Promise<ApiOrderRaw> {
-  const res = await fetch(`${base()}/api/orders/${orderId}`, {
+  const u = new URL(`${base()}/api/orders/${encodeURIComponent(orderId)}`);
+  if (opts?.upstreamEnrich) u.searchParams.set('upstreamEnrich', '1');
+  const res = await fetch(u.toString(), {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -452,13 +839,31 @@ export async function fetchOrderDetail(
 export async function fetchOrderByPlatformOrderId(
   tenantId: string,
   userId: string | undefined,
-  platformOrderId: string
+  platformOrderId: string,
+  opts?: { upstreamEnrich?: boolean }
 ): Promise<ApiOrderRaw> {
   const u = new URL(`${base()}/api/orders`);
   u.searchParams.set('platformOrderId', platformOrderId.trim());
+  if (opts?.upstreamEnrich !== false) u.searchParams.set('upstreamEnrich', '1');
   const res = await fetch(u.toString(), { headers: await intellideskHeadersWithAuth(tenantId, userId) });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<ApiOrderRaw>;
+}
+
+export async function postOrderLogisticsSync(
+  tenantId: string,
+  userId: string | undefined,
+  orderId: string,
+  force = false
+): Promise<{ ok: boolean; message?: string }> {
+  const u = new URL(`${base()}/api/orders/${orderId}/logistics/sync`);
+  if (force) u.searchParams.set('force', '1');
+  const res = await fetch(u.toString(), {
+    method: 'POST',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<{ ok: boolean; message?: string }>;
 }
 
 // --- Dashboard ---
@@ -543,6 +948,14 @@ export type ApiAfterSalesRaw = {
   returnCarrier?: string;
   reissueSku?: string;
   reissueQuantity?: number;
+  channelShopLabel?: string;
+  channelPlatformType?: string | null;
+  orderPlatformOrderId?: string;
+  orderAmount?: number;
+  orderCurrency?: string;
+  orderProductTitles?: string[];
+  orderChannelShopLabel?: string;
+  orderChannelPlatformType?: string | null;
 };
 
 function mapAfterSalesToUi(raw: ApiAfterSalesRaw): AfterSalesRecord {
@@ -567,6 +980,14 @@ function mapAfterSalesToUi(raw: ApiAfterSalesRaw): AfterSalesRecord {
     returnCarrier: raw.returnCarrier,
     reissueSku: raw.reissueSku,
     reissueQuantity: raw.reissueQuantity,
+    channelShopLabel: raw.channelShopLabel,
+    channelPlatformType: raw.channelPlatformType,
+    orderPlatformOrderId: raw.orderPlatformOrderId,
+    orderAmount: raw.orderAmount,
+    orderCurrency: raw.orderCurrency,
+    orderProductTitles: raw.orderProductTitles,
+    orderChannelShopLabel: raw.orderChannelShopLabel,
+    orderChannelPlatformType: raw.orderChannelPlatformType,
   };
 }
 
@@ -596,6 +1017,7 @@ export type CreateAfterSalesBody = {
   buyerFeedback: string;
   refundAmount?: number;
   refundReason?: string;
+  refundExecutionType?: 'manual' | 'api';
   returnTrackingNumber?: string;
   returnCarrier?: string;
   reissueSku?: string;
@@ -645,18 +1067,157 @@ export async function patchAfterSalesRecord(
   return mapAfterSalesToUi((await res.json()) as ApiAfterSalesRaw);
 }
 
+export async function deleteAfterSalesRecord(
+  tenantId: string,
+  userId: string | undefined,
+  id: string
+): Promise<void> {
+  const res = await fetch(`${base()}/api/after-sales/${id}`, {
+    method: 'DELETE',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+}
+
+export async function postAiSummarize(
+  tenantId: string,
+  userId: string | undefined,
+  ticketId: string
+): Promise<{ summary: string }> {
+  const res = await fetch(`${base()}/api/ai/summarize`, {
+    method: 'POST',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify({ ticketId }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<{ summary: string }>;
+}
+
 export async function postAiSuggestReply(
   tenantId: string,
   userId: string | undefined,
   ticketId: string
-): Promise<{ suggestion: string }> {
+): Promise<{ suggestion: string; platformSuggestion?: string }> {
   const res = await fetch(`${base()}/api/ai/suggest-reply`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify({ ticketId }),
   });
   if (!res.ok) throw new Error(await parseError(res));
-  return res.json() as Promise<{ suggestion: string }>;
+  return res.json() as Promise<{ suggestion: string; platformSuggestion?: string }>;
+}
+
+export async function postAiPolish(
+  tenantId: string,
+  userId: string | undefined,
+  ticketId: string,
+  draftText: string
+): Promise<{ polished: string }> {
+  const res = await fetch(`${base()}/api/ai/polish`, {
+    method: 'POST',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify({ ticketId, draftText }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<{ polished: string }>;
+}
+
+export async function postAiRecognizeAfterSales(
+  tenantId: string,
+  userId: string | undefined,
+  body: { buyerFeedback?: string; ticketId?: string; maxRefund?: number; currency?: string }
+): Promise<{ result: Record<string, unknown> }> {
+  const res = await fetch(`${base()}/api/ai/recognize-after-sales`, {
+    method: 'POST',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<{ result: Record<string, unknown> }>;
+}
+
+export async function postAiSummarizeMessages(
+  tenantId: string,
+  userId: string | undefined,
+  messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
+): Promise<{ summary: string }> {
+  const res = await fetch(`${base()}/api/ai/summarize-messages`, {
+    method: 'POST',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify({ messages }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<{ summary: string }>;
+}
+
+export async function postAiTranslate(
+  tenantId: string,
+  userId: string | undefined,
+  body: { text: string; targetLang: string; sourceLang?: string }
+): Promise<{ translated: string }> {
+  const res = await fetch(`${base()}/api/ai/translate`, {
+    method: 'POST',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<{ translated: string }>;
+}
+
+export async function postAiBatchTranslate(
+  tenantId: string,
+  userId: string | undefined,
+  body: { messages: { id: string; content: string }[]; targetLang: string }
+): Promise<{ results: Record<string, string> }> {
+  const res = await fetch(`${base()}/api/ai/batch-translate`, {
+    method: 'POST',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<{ results: Record<string, string> }>;
+}
+
+export async function postAiClassifyIntent(
+  tenantId: string,
+  userId: string | undefined,
+  ticketId: string
+): Promise<{ intent: string }> {
+  const res = await fetch(`${base()}/api/ai/classify-intent`, {
+    method: 'POST',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify({ ticketId }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<{ intent: string }>;
+}
+
+export async function postAiClassifySentiment(
+  tenantId: string,
+  userId: string | undefined,
+  ticketId: string
+): Promise<{ sentiment: string }> {
+  const res = await fetch(`${base()}/api/ai/classify-sentiment`, {
+    method: 'POST',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify({ ticketId }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<{ sentiment: string }>;
+}
+
+export async function postAiTicketInsight(
+  tenantId: string,
+  userId: string | undefined,
+  ticketId: string
+): Promise<{ summary: string; intent: string; sentiment: string }> {
+  const res = await fetch(`${base()}/api/ai/ticket-insight`, {
+    method: 'POST',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify({ ticketId }),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<{ summary: string; intent: string; sentiment: string }>;
 }
 
 export type CreateAgentSeatBody = {
@@ -781,7 +1342,7 @@ export type ApiAutoReplyRuleRow = {
   enabled: boolean;
   intentMatch: string | null;
   keywords: string[];
-  templateId: string | null;
+  replyContent: string | null;
   markRepliedOnSend: boolean;
 };
 
@@ -801,7 +1362,7 @@ export type CreateAutoReplyRuleBody = {
   enabled?: boolean;
   intentMatch?: string | null;
   keywords?: string[];
-  templateId?: string | null;
+  replyContent?: string | null;
   markRepliedOnSend?: boolean;
 };
 
@@ -824,7 +1385,7 @@ export type PatchAutoReplyRuleBody = Partial<{
   enabled: boolean;
   intentMatch: string | null;
   keywords: string[];
-  templateId: string | null;
+  replyContent: string | null;
   markRepliedOnSend: boolean;
 }>;
 
@@ -862,7 +1423,25 @@ export type ApiTicketRoutingRuleRow = {
   conditions: unknown;
   targetSeatId: string | null;
   enabled: boolean;
+  createdAt?: string;
 };
+
+export type ApiRoutingRuleOptions = {
+  platforms: { value: string; label: string }[];
+  channels: { id: string; displayName: string; platformType: string | null }[];
+  afterSalesTypes: { value: string; label: string }[];
+};
+
+export async function fetchRoutingRuleOptions(
+  tenantId: string,
+  userId: string | undefined
+): Promise<ApiRoutingRuleOptions> {
+  const res = await fetch(`${base()}/api/settings/routing-rule-options`, {
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<ApiRoutingRuleOptions>;
+}
 
 export async function fetchTicketRoutingRules(
   tenantId: string,
@@ -930,4 +1509,117 @@ export async function deleteTicketRoutingRule(
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
+}
+
+// --- 母系统正式同步设置 ---
+
+export type BackfillMode = 'full' | 'from_date' | 'recent_days';
+
+export type ApiTenantSyncSettings = {
+  id: string;
+  tenantId: string;
+  syncEnabled: boolean;
+  messagePollIntervalSec: number;
+  orderPollIntervalSec: number;
+  incrementalSyncDays: number;
+  useSyncWatermark: boolean;
+  messageSyncDisabledPlatformTypes: string[];
+  defaultNewShopOrderBackfillMode: string;
+  defaultNewShopOrderBackfillFrom: string | null;
+  defaultNewShopOrderBackfillRecentDays: number;
+  defaultNewShopTicketBackfillMode: string;
+  defaultNewShopTicketBackfillFrom: string | null;
+  defaultNewShopTicketBackfillRecentDays: number;
+  skipMockTickets: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ApiChannelSyncRow = {
+  id: string;
+  displayName: string;
+  platformType: string | null;
+  externalShopId: string | null;
+  syncMessagesEnabled: boolean;
+  syncOrdersEnabled: boolean;
+  orderBackfillMode: string | null;
+  orderBackfillFrom: string | null;
+  orderBackfillRecentDays: number | null;
+  ticketBackfillMode: string | null;
+  ticketBackfillFrom: string | null;
+  ticketBackfillRecentDays: number | null;
+  initialBackfillCompletedAt: string | null;
+};
+
+export type ApiMotherSyncBundle = {
+  settings: ApiTenantSyncSettings;
+  channels: ApiChannelSyncRow[];
+};
+
+export async function fetchMotherSyncBundle(
+  tenantId: string,
+  userId: string | undefined
+): Promise<ApiMotherSyncBundle> {
+  const res = await fetch(`${base()}/api/settings/mother-sync`, {
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<ApiMotherSyncBundle>;
+}
+
+export type PatchMotherSyncSettingsBody = Partial<{
+  syncEnabled: boolean;
+  messagePollIntervalSec: number;
+  orderPollIntervalSec: number;
+  incrementalSyncDays: number;
+  useSyncWatermark: boolean;
+  messageSyncDisabledPlatformTypes: string[];
+  defaultNewShopOrderBackfillMode: BackfillMode;
+  defaultNewShopOrderBackfillFrom: string | null;
+  defaultNewShopOrderBackfillRecentDays: number;
+  defaultNewShopTicketBackfillMode: BackfillMode;
+  defaultNewShopTicketBackfillFrom: string | null;
+  defaultNewShopTicketBackfillRecentDays: number;
+  skipMockTickets: boolean;
+}>;
+
+export async function patchMotherSyncSettings(
+  tenantId: string,
+  userId: string | undefined,
+  body: PatchMotherSyncSettingsBody
+): Promise<ApiMotherSyncBundle> {
+  const res = await fetch(`${base()}/api/settings/mother-sync`, {
+    method: 'PATCH',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<ApiMotherSyncBundle>;
+}
+
+export type PatchChannelMotherSyncBody = Partial<{
+  syncMessagesEnabled: boolean;
+  syncOrdersEnabled: boolean;
+  orderBackfillMode: BackfillMode | null;
+  orderBackfillFrom: string | null;
+  orderBackfillRecentDays: number | null;
+  ticketBackfillMode: BackfillMode | null;
+  ticketBackfillFrom: string | null;
+  ticketBackfillRecentDays: number | null;
+  initialBackfillCompletedAt: string | null;
+}>;
+
+export async function patchChannelMotherSync(
+  tenantId: string,
+  userId: string | undefined,
+  channelId: string,
+  body: PatchChannelMotherSyncBody
+): Promise<ApiChannelSyncRow> {
+  const res = await fetch(`${base()}/api/settings/channels/${channelId}/mother-sync`, {
+    method: 'PATCH',
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<ApiChannelSyncRow>;
 }

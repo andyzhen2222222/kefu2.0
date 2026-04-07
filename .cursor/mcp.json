@@ -1,0 +1,14 @@
+﻿{
+  "mcpServers": {
+    "API 文档": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "apifox-mcp-server@latest",
+        "--oas=E:\\kefu\\2.0\\openapi-evol.json"
+      ]
+    }
+  }
+}

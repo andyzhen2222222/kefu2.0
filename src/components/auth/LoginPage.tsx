@@ -100,7 +100,7 @@ export default function LoginPage() {
                       type="text" 
                       value={loginAccount}
                       onChange={(e) => setLoginAccount(e.target.value)}
-                      placeholder="请输入账号或手机号（输入包含 agent 可测试客服角色）"
+                      placeholder="联调：管理员填完整邮箱；坐席填与后台坐席「登录账号」或邮箱一致。演示 mock：账号含 agent 为客服角色"
                       className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 focus:bg-white focus:border-orange-500 focus:ring-2 focus:ring-orange-200 rounded-xl text-sm transition-all outline-none"
                     />
                   </div>
@@ -188,7 +188,8 @@ export default function LoginPage() {
 
             <div className="flex justify-center gap-6 pt-2">
               <button 
-                onClick={signIn}
+                type="button"
+                onClick={() => void signIn(loginAccount)}
                 className="flex flex-col items-center gap-2 group"
                 title="Google SSO"
               >

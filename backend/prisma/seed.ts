@@ -18,6 +18,25 @@ async function main() {
     update: { name: 'Demo Merchant' },
   });
 
+  await prisma.tenantSyncSettings.upsert({
+    where: { tenantId: SEED.tenantId },
+    create: {
+      tenantId: SEED.tenantId,
+      syncEnabled: true,
+      messagePollIntervalSec: 300,
+      orderPollIntervalSec: 900,
+      incrementalSyncDays: 90,
+      useSyncWatermark: true,
+      messageSyncDisabledPlatformTypes: [],
+      defaultNewShopOrderBackfillMode: 'recent_days',
+      defaultNewShopOrderBackfillRecentDays: 90,
+      defaultNewShopTicketBackfillMode: 'recent_days',
+      defaultNewShopTicketBackfillRecentDays: 90,
+      skipMockTickets: true,
+    },
+    update: {},
+  });
+
   await prisma.user.upsert({
     where: { tenantId_email: { tenantId: SEED.tenantId, email: 'admin@demo.local' } },
     create: {
@@ -203,6 +222,13 @@ async function main() {
       shippingStatus: 'In Transit',
       paymentStatus: 'Paid',
       hasVatInfo: true,
+      storeEntity: {
+        id: 'SE-001',
+        legalName: 'VibeSports Global Ltd.',
+        displayName: 'Amazon US - VibeSports',
+        address: '100 California St, San Francisco, CA 94111, USA',
+        vatNumber: 'US123456789',
+      },
     },
     update: { orderStatus: 'shipped' },
   });
@@ -335,6 +361,13 @@ async function main() {
       shippingStatus: 'Pending',
       paymentStatus: 'Paid',
       hasVatInfo: true,
+      storeEntity: {
+        id: 'SE-005',
+        legalName: 'NextGen Retail DE GmbH',
+        displayName: 'Amazon DE - NextGen',
+        address: 'Kurfürstendamm 21, 10719 Berlin, Germany',
+        vatNumber: 'DE321654987',
+      },
     },
     update: { orderStatus: 'unshipped' },
   });
@@ -585,6 +618,7 @@ async function main() {
       senderId: 'Jane Smith',
       senderType: 'customer',
       content: 'Package stuck — please advise.',
+      translatedContent: '包裹卡住了，请提供建议。',
       isInternal: false,
     },
   });
@@ -618,6 +652,7 @@ async function main() {
       senderId: '王伟',
       senderType: 'customer',
       content: '你好，订单 113-1111222-3333444 请改寄深圳市南山区。',
+      translatedContent: 'Hello, order 113-1111222-3333444 please redirect to Nanshan District, Shenzhen.',
       isInternal: false,
     },
   });
@@ -969,6 +1004,87 @@ async function main() {
     ],
   });
 
+  /** ticket13 Amazon DE · 发票功能测试专用 (完整主体信息) */
+  const orderId13 = 'aaaaaaaa-aaaa-4aaa-8aaa-order0000013';
+  const ticketId13 = 'aaaaaaaa-aaaa-4aaa-8aaa-ticket000013';
+  await prisma.order.upsert({
+    where: {
+      tenantId_platformOrderId: {
+        tenantId: SEED.tenantId,
+        platformOrderId: 'DE-INV-TEST-2026',
+      },
+    },
+    create: {
+      id: orderId13,
+      tenantId: SEED.tenantId,
+      customerId: SEED.customerMaria,
+      channelId: SEED.channelAmazonDe,
+      platformOrderId: 'DE-INV-TEST-2026',
+      productTitles: ['Pro-Grade Yoga Mat', 'Foam Roller'],
+      skuList: ['YG-MAT-01', 'FR-RED-01'],
+      eanList: ['4250123456789', '4250123456790'],
+      amount: 115.50,
+      currency: 'EUR',
+      orderStatus: 'shipped',
+      shippingStatus: 'Delivered',
+      paymentStatus: 'Paid',
+      hasVatInfo: true,
+      storeEntity: {
+        id: 'SE-TEST-DE',
+        legalName: 'IntelliDesk Global Trading GmbH',
+        displayName: 'IntelliDesk DE Store',
+        address: 'Friedrichstraße 100, 10117 Berlin, Germany',
+        vatNumber: 'DE123456789',
+        taxCode: 'HRB 123456 B',
+      },
+    },
+    update: {
+      hasVatInfo: true,
+      storeEntity: {
+        id: 'SE-TEST-DE',
+        legalName: 'IntelliDesk Global Trading GmbH',
+        displayName: 'IntelliDesk DE Store',
+        address: 'Friedrichstraße 100, 10117 Berlin, Germany',
+        vatNumber: 'DE123456789',
+        taxCode: 'HRB 123456 B',
+      },
+    },
+  });
+
+  await prisma.ticket.upsert({
+    where: { id: ticketId13 },
+    create: {
+      id: ticketId13,
+      tenantId: SEED.tenantId,
+      channelId: SEED.channelAmazonDe,
+      customerId: SEED.customerMaria,
+      orderId: orderId13,
+      status: TicketStatus.todo,
+      priority: 2,
+      sentiment: 'neutral',
+      intent: '发票相关',
+      messageProcessingStatus: 'unreplied',
+      subject: '【测试】请提供该订单的发票',
+      subjectOriginal: 'Please provide invoice for this order',
+      slaDueAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      tags: ['发票测试'],
+    },
+    update: {},
+  });
+
+  await prisma.message.deleteMany({ where: { ticketId: ticketId13 } });
+  await prisma.message.create({
+    data: {
+      id: 'msg-inv-test-001',
+      ticketId: ticketId13,
+      senderId: 'Maria Garcia',
+      senderType: 'customer',
+      content: 'I need a commercial invoice for order DE-INV-TEST-2026. My company needs it for tax purposes.',
+      translatedContent: '我需要订单 DE-INV-TEST-2026 的商业发票。我们公司报税需要用到。',
+      isInternal: false,
+    },
+  });
+
   await prisma.slaRule.upsert({
     where: { id: 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001' },
     create: {
@@ -992,9 +1108,12 @@ async function main() {
       enabled: false,
       intentMatch: '物流查询',
       keywords: ['物流', 'tracking'],
+      replyContent: '您好，我们正在为您查询物流信息，请稍候。',
       markRepliedOnSend: true,
     },
-    update: {},
+    update: {
+      replyContent: '您好，我们正在为您查询物流信息，请稍候。',
+    },
   });
 
   await prisma.ticketRoutingRule.upsert({
@@ -1002,13 +1121,23 @@ async function main() {
     create: {
       id: 'dddddddd-dddd-4ddd-8ddd-000000000001',
       tenantId: SEED.tenantId,
-      name: '高优先级 → 李娜',
+      name: 'Amazon US 店铺 → 李娜',
       priority: 10,
-      conditions: { minPriority: 1 },
+      conditions: {
+        platformTypes: ['AMAZON'],
+        channelIds: [SEED.channelAmazonUs],
+        afterSalesTypes: [],
+      },
       targetSeatId: SEED.seat1,
       enabled: true,
     },
-    update: {},
+    update: {
+      conditions: {
+        platformTypes: ['AMAZON'],
+        channelIds: [SEED.channelAmazonUs],
+        afterSalesTypes: [],
+      },
+    },
   });
 
   await prisma.afterSalesRecord.upsert({

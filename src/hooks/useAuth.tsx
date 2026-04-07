@@ -1,6 +1,11 @@
 import { useState, useEffect, createContext, useContext } from 'react';
 import { auth, db, handleFirestoreError, OperationType } from '@/src/lib/firebase';
-import { registerIntellideskBearerTokenGetter } from '@/src/services/intellideskApi';
+import {
+  intellideskConfigured,
+  intellideskTenantId,
+  registerIntellideskBearerTokenGetter,
+  resolveSessionUserFromAccount,
+} from '@/src/services/intellideskApi';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { User } from '@/src/types';
@@ -43,7 +48,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    /** mock 构建/开发不挂 Firebase，避免网络或配置问题导致 onAuthStateChanged 迟迟不回调、页面一直转圈 */
+    if (import.meta.env.MODE === 'mock') {
+      setUser(null);
+      setLoading(false);
+      return;
+    }
+
+    /** Firebase SDK 偶发不回调时避免登录页永久转圈（计划：前端启动排查） */
+    const authStuckMs = 12_000;
+    const stuckTimer = window.setTimeout(() => {
+      setLoading(false);
+    }, authStuckMs);
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      window.clearTimeout(stuckTimer);
       if (firebaseUser) {
         try {
           // Fetch user profile from Firestore
@@ -74,12 +93,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      window.clearTimeout(stuckTimer);
+      unsubscribe();
+    };
   }, []);
 
   const signIn = async (account?: string) => {
     try {
-      // 若有输入特定账号，可用于简单 mock 不同角色（比如包含 agent 字样就给一线客服角色）
+      if (intellideskConfigured()) {
+        const tid = intellideskTenantId();
+        const result = await resolveSessionUserFromAccount(tid, account);
+        if (!result.user) {
+          const msg =
+            'error' in result && result.error
+              ? result.error
+              : '登录失败：坐席请输入与后台「2·坐席」中一致的登录账号或邮箱；管理员请输入完整邮箱（如 admin@demo.local）。';
+          window.alert(msg);
+          return;
+        }
+        setUser(result.user);
+        localStorage.setItem('mockUser', JSON.stringify(result.user));
+        return;
+      }
+
+      // 纯前端演示：无后端时按关键字粗分角色（与真实联调无关）
       let role: User['role'] = 'admin';
       let name = '管理员（演示）';
       if (account?.includes('agent')) {
@@ -99,7 +137,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(mockUser);
       localStorage.setItem('mockUser', JSON.stringify(mockUser));
     } catch (error) {
-      console.error("Sign in error:", error);
+      console.error('Sign in error:', error);
+      window.alert(error instanceof Error ? error.message : String(error));
     }
   };
 

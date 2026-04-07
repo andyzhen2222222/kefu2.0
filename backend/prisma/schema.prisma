@@ -63,6 +63,38 @@ model Tenant {
   slaRules         SlaRule[]
   autoReplyRules   AutoReplyRule[]
   routingRules     TicketRoutingRule[]
+  syncStates       TenantSyncState[]
+  syncSettings     TenantSyncSettings?
+}
+
+/// 母系统 / 正式同步策略（频率、平台默认、新店铺回填模板等）
+model TenantSyncSettings {
+  id            String   @id @default(uuid())
+  tenantId      String   @unique
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// 总开关：关闭后定时任务跳过该租户
+  syncEnabled   Boolean  @default(true)
+  /// 会话/消息轮询间隔（秒）
+  messagePollIntervalSec Int @default(300)
+  /// 订单轮询间隔（秒）
+  orderPollIntervalSec   Int @default(900)
+  /// 增量同步回溯上限（天），与水位组合使用，且不超过母系统单次窗口上限（默认 90 天，对齐工单最近更新时间）
+  incrementalSyncDays    Int @default(90)
+  /// 使用水位线计算下次起点（订单与会话/消息各用独立 scope）
+  useSyncWatermark       Boolean @default(true)
+  /// 这些 platformType 的新店铺默认不同步消息；填 __unset__ 表示 platformType 为空时默认关闭
+  messageSyncDisabledPlatformTypes String[] @default([])
+  /// 新店铺订单回填：full | from_date | recent_days
+  defaultNewShopOrderBackfillMode  String  @default("recent_days")
+  defaultNewShopOrderBackfillFrom  DateTime?
+  defaultNewShopOrderBackfillRecentDays Int @default(90)
+  defaultNewShopTicketBackfillMode      String  @default("recent_days")
+  defaultNewShopTicketBackfillFrom      DateTime?
+  defaultNewShopTicketBackfillRecentDays Int @default(90)
+  /// 未拉到真实会话时是否生成演示工单（生产建议 true=跳过演示）
+  skipMockTickets Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model User {
@@ -77,6 +109,8 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  agentSeat AgentSeat?
+
   @@unique([tenantId, email])
   @@index([tenantId])
 }
@@ -86,6 +120,8 @@ model AgentSeat {
   id          String   @id @default(uuid())
   tenantId    String
   tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String?  @unique
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   displayName String
   email       String
   account     String
@@ -107,6 +143,25 @@ model Channel {
   region         String?
   externalShopId String?
   defaultSlaHours Int?
+  /// 母系统 platform-site：站点默认货币（ISO，如 USD、EUR）
+  defaultCurrency   String?
+  /// 母系统 platform-site：平台/站点语言（如 en、fr、de）
+  platformLanguage  String?
+  /// 发票用：母系统 automation 店铺主体 + vat-info 页合并（对齐前端 StoreEntity）
+  invoiceStoreEntity Json?
+  /// 是否同步该店铺的会话/工单与消息（母系统列表仍可能返回，本地不入库）
+  syncMessagesEnabled Boolean @default(true)
+  /// 是否同步该店铺订单
+  syncOrdersEnabled   Boolean @default(true)
+  /// 订单回填策略；null 表示沿用租户默认（展示时用租户设置）
+  orderBackfillMode   String?
+  orderBackfillFrom   DateTime?
+  orderBackfillRecentDays Int?
+  ticketBackfillMode  String?
+  ticketBackfillFrom  DateTime?
+  ticketBackfillRecentDays Int?
+  /// 首轮回填完成后由任务或管理端标记（预留，供后续按店细粒度回溯）
+  initialBackfillCompletedAt DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -150,6 +205,7 @@ model Order {
   platformOrderId  String
   skuList          String[] @default([])
   productTitles    String[] @default([])
+  eanList          String[] @default([])
   amount           Decimal  @db.Decimal(14, 2)
   currency         String   @default("USD")
   orderStatus      String
@@ -160,11 +216,24 @@ model Order {
   refundStatus     String?
   returnStatus     String?
   logisticsStatus  String?
+  logisticsPrimaryStatus String?
+  logisticsSecondaryStatus String?
+  logisticsStatusCode String?
+  logisticsSubStatusCode String?
+  isLogisticsException Boolean @default(false)
+  logisticsLastSyncedAt DateTime?
+  logisticsIsRegistered Boolean @default(false)
   carrier          String?
+  paidAt           DateTime?
+  shippedAt        DateTime?
+  refundedAt       DateTime?
   hasVatInfo       Boolean  @default(false)
+  storeEntity      Json?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
 
+  items           OrderItem[]
   logisticsEvents LogisticsEvent[]
   tickets         Ticket[]
   afterSales      AfterSalesRecord[]
@@ -172,6 +241,21 @@ model Order {
   @@unique([tenantId, platformOrderId])
   @@index([tenantId])
   @@index([customerId])
+}
+
+model OrderItem {
+  id        String   @id @default(uuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sku       String
+  title     String
+  ean       String?
+  quantity  Int      @default(1)
+  price     Decimal  @db.Decimal(14, 2)
+  currency  String
+
+  @@index([orderId])
+  @@index([sku])
 }
 
 model LogisticsEvent {
@@ -216,6 +300,8 @@ model Ticket {
   resolvedAt                DateTime?
   createdAt                 DateTime     @default(now())
   updatedAt                 DateTime     @updatedAt
+  deletedAt                 DateTime?
+  externalId                String?      // 母系统会话 ID
 
   messages   Message[]
   afterSales AfterSalesRecord[]
@@ -223,6 +309,8 @@ model Ticket {
   @@index([tenantId])
   @@index([tenantId, status])
   @@index([tenantId, messageProcessingStatus])
+  @@index([tenantId, slaDueAt])
+  @@index([tenantId, messageProcessingStatus, createdAt(desc)])
   @@index([updatedAt])
 }
 
@@ -239,9 +327,25 @@ model Message {
   translatedContent  String?  @db.Text
   sentPlatformText   String?  @db.Text
   deliveryTargets    String[] @default([])
+  /** 母系统消息 id，用于去重与对账 */
+  motherMessageId    String?
 
   @@index([ticketId])
   @@index([ticketId, createdAt])
+  @@unique([ticketId, motherMessageId])
+}
+
+/// 租户维度同步水位（收件箱增量起点等）
+model TenantSyncState {
+  id              String    @id @default(uuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  scope           String
+  lastWatermarkAt DateTime?
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([tenantId, scope])
+  @@index([tenantId])
 }
 
 model AfterSalesRecord {
@@ -266,6 +370,7 @@ model AfterSalesRecord {
   reissueQuantity     Int?
   createdAt           DateTime           @default(now())
   updatedAt           DateTime           @updatedAt
+  deletedAt           DateTime?
 
   @@index([tenantId])
   @@index([orderId])
@@ -298,7 +403,7 @@ model AutoReplyRule {
   enabled     Boolean  @default(true)
   intentMatch String?
   keywords    String[] @default([])
-  templateId  String?
+  replyContent String? @db.Text
   markRepliedOnSend Boolean @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

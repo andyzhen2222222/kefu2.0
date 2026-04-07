@@ -14,36 +14,46 @@ import {
   fetchAgentSeats,
   createAgentSeat,
   deleteAgentSeat,
+  splitSeatSyncApiError,
 } from '@/src/services/intellideskApi';
-
-const PERMISSION_PRESETS: { key: string; label: string }[] = [
-  { key: 'inbox.view', label: '收件箱查看' },
-  { key: 'inbox.reply', label: '会话回复与发送' },
-  { key: 'after_sales', label: '售后工单' },
-  { key: 'orders.view', label: '订单查看' },
-  { key: 'settings.read', label: '设置只读' },
-  { key: 'settings.write', label: '设置编辑' },
-];
+import {
+  SEAT_ROLE_TEMPLATES,
+  SEAT_PERMISSION_EDITOR_GROUPS,
+  permissionKeysForTemplate,
+  normalizeSeatPermissionKeys,
+  detectTemplateId,
+  templateLabel,
+  type SeatRoleTemplateId,
+} from '@/src/lib/seatPermissions';
 
 const INITIAL_ROLES: CustomRole[] = [
   {
     id: 'role-admin',
     name: '管理员',
-    description: '全功能，含坐席与分配规则配置',
-    permissionKeys: PERMISSION_PRESETS.map((p) => p.key),
+    description: '含设置与分配管理',
+    permissionTemplateId: 'full',
+    permissionKeys: permissionKeysForTemplate('full'),
   },
   {
     id: 'role-agent',
     name: '一线客服',
-    description: '处理收件箱与售后，无组织设置权限',
-    permissionKeys: ['inbox.view', 'inbox.reply', 'after_sales', 'orders.view'],
+    description: '日常接待、会话与售后',
+    permissionTemplateId: 'standard',
+    permissionKeys: permissionKeysForTemplate('standard'),
+  },
+  {
+    id: 'role-finance',
+    name: '财务/运营',
+    description: '售后单审核与退款操作',
+    permissionTemplateId: 'finance',
+    permissionKeys: permissionKeysForTemplate('finance'),
   },
 ];
 
 const STEPS = [
-  { n: 1 as const, label: '创建角色', icon: Shield },
-  { n: 2 as const, label: '创建坐席', icon: UserCog },
-  { n: 3 as const, label: '工单分配', icon: GitBranch },
+  { n: 1 as const, label: '角色', icon: Shield },
+  { n: 2 as const, label: '坐席', icon: UserCog },
+  { n: 3 as const, label: '分配', icon: GitBranch },
 ];
 
 export default function SeatsAndRolesPage() {
@@ -67,7 +77,15 @@ export default function SeatsAndRolesPage() {
   const [roleModalOpen, setRoleModalOpen] = useState(false);
   const [seatModalOpen, setSeatModalOpen] = useState(false);
   const [editingRole, setEditingRole] = useState<CustomRole | null>(null);
-  const [roleForm, setRoleForm] = useState({ name: '', description: '', permissionKeys: [] as string[] });
+  const [roleForm, setRoleForm] = useState<{
+    name: string;
+    description: string;
+    permissionKeys: string[];
+  }>({
+    name: '',
+    description: '',
+    permissionKeys: permissionKeysForTemplate('standard'),
+  });
   const [seatForm, setSeatForm] = useState({
     displayName: '',
     email: '',
@@ -76,7 +94,7 @@ export default function SeatsAndRolesPage() {
     roleId: INITIAL_ROLES[0]?.id || '',
     status: 'active' as 'active' | 'inactive',
   });
-  const [settingsApiError, setSettingsApiError] = useState<string | null>(null);
+  const [seatSyncBanner, setSeatSyncBanner] = useState<{ summary: string; detail: string } | null>(null);
 
   const reloadSeats = useCallback(async () => {
     if (!intellideskConfigured()) return;
@@ -95,9 +113,10 @@ export default function SeatsAndRolesPage() {
           status: r.status,
         }))
       );
-      setSettingsApiError(null);
+      setSeatSyncBanner(null);
     } catch (e) {
-      setSettingsApiError(e instanceof Error ? e.message : String(e));
+      const raw = e instanceof Error ? e.message : String(e);
+      setSeatSyncBanner(splitSeatSyncApiError(raw));
     }
   }, [user?.id]);
 
@@ -124,7 +143,11 @@ export default function SeatsAndRolesPage() {
 
   const openNewRole = () => {
     setEditingRole(null);
-    setRoleForm({ name: '', description: '', permissionKeys: ['inbox.view', 'inbox.reply'] });
+    setRoleForm({
+      name: '',
+      description: '',
+      permissionKeys: permissionKeysForTemplate('standard'),
+    });
     setRoleModalOpen(true);
   };
 
@@ -133,13 +156,24 @@ export default function SeatsAndRolesPage() {
     setRoleForm({
       name: r.name,
       description: r.description,
-      permissionKeys: [...r.permissionKeys],
+      permissionKeys: normalizeSeatPermissionKeys([...r.permissionKeys]),
     });
     setRoleModalOpen(true);
   };
 
+  const toggleRolePermissionKey = (key: string, enabled: boolean) => {
+    setRoleForm((f) => {
+      const next = new Set(f.permissionKeys);
+      if (enabled) next.add(key);
+      else next.delete(key);
+      return { ...f, permissionKeys: normalizeSeatPermissionKeys([...next]) };
+    });
+  };
+
   const saveRole = () => {
     if (!roleForm.name.trim()) return;
+    const keys = normalizeSeatPermissionKeys(roleForm.permissionKeys);
+    const permissionTemplateId = detectTemplateId(keys);
     if (editingRole) {
       setRoles((prev) =>
         prev.map((r) =>
@@ -148,7 +182,8 @@ export default function SeatsAndRolesPage() {
                 ...r,
                 name: roleForm.name.trim(),
                 description: roleForm.description.trim(),
-                permissionKeys: roleForm.permissionKeys,
+                permissionKeys: keys,
+                permissionTemplateId,
               }
             : r
         )
@@ -160,7 +195,8 @@ export default function SeatsAndRolesPage() {
           id: `role-${Date.now()}`,
           name: roleForm.name.trim(),
           description: roleForm.description.trim(),
-          permissionKeys: roleForm.permissionKeys,
+          permissionKeys: keys,
+          permissionTemplateId,
         },
       ]);
     }
@@ -169,20 +205,11 @@ export default function SeatsAndRolesPage() {
 
   const deleteRole = (id: string) => {
     if (seats.some((s) => s.roleId === id)) {
-      window.alert('仍有坐席绑定该角色，请先调整坐席角色后再删除。');
+      window.alert('有坐席仍绑定该角色，请先调整后再删。');
       return;
     }
-    if (!window.confirm('确定删除该角色？')) return;
+    if (!window.confirm('删除该角色？')) return;
     setRoles((prev) => prev.filter((r) => r.id !== id));
-  };
-
-  const togglePermission = (key: string) => {
-    setRoleForm((prev) => ({
-      ...prev,
-      permissionKeys: prev.permissionKeys.includes(key)
-        ? prev.permissionKeys.filter((k) => k !== key)
-        : [...prev.permissionKeys, key],
-    }));
   };
 
   const openNewSeat = () => {
@@ -199,11 +226,11 @@ export default function SeatsAndRolesPage() {
 
   const saveSeat = () => {
     if (!seatForm.displayName.trim() || !seatForm.email.trim() || !seatForm.account.trim()) {
-      window.alert('请填写显示名称、邮箱、登录账号。');
+      window.alert('请填写名称、邮箱、登录账号。');
       return;
     }
     if (!intellideskConfigured() && !seatForm.password.trim()) {
-      window.alert('演示模式下请同时填写登录密码。');
+      window.alert('演示须填写登录密码。');
       return;
     }
     if (intellideskConfigured()) {
@@ -240,7 +267,7 @@ export default function SeatsAndRolesPage() {
   };
 
   const deleteSeat = (id: string) => {
-    if (!window.confirm('确定移除该坐席？相关分配规则需手动调整。')) return;
+    if (!window.confirm('移除该坐席？请检查分配规则。')) return;
     if (intellideskConfigured()) {
       void (async () => {
         try {
@@ -261,16 +288,48 @@ export default function SeatsAndRolesPage() {
     <div className="flex-1 overflow-y-auto bg-slate-50 p-8">
       <div className="max-w-6xl mx-auto space-y-6">
         <div>
-          {settingsApiError ? (
-            <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-2 text-sm text-amber-900">
-              坐席同步 API：{settingsApiError}
+          {seatSyncBanner ? (
+            <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <div className="flex items-start justify-between gap-3">
+                <p className="font-medium text-amber-950 leading-snug min-w-0">
+                  坐席列表未从服务器更新：{seatSyncBanner.summary}
+                  <span className="block text-xs font-normal text-amber-800/90 mt-1">
+                    当前表格仍为上次成功加载的数据或本地演示数据；接口恢复后可刷新页面重试。
+                  </span>
+                </p>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => void reloadSeats()}
+                    className="text-xs font-semibold text-[#c2410c] hover:underline px-2 py-1"
+                  >
+                    重试
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSeatSyncBanner(null)}
+                    className="p-1.5 rounded-lg text-amber-700 hover:bg-amber-100/80"
+                    title="关闭提示"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              {seatSyncBanner.detail && seatSyncBanner.detail !== seatSyncBanner.summary ? (
+                <details className="mt-2 text-xs text-amber-900/85 border-t border-amber-200/80 pt-2">
+                  <summary className="cursor-pointer select-none font-medium text-amber-900 hover:text-amber-950">
+                    完整诊断信息
+                  </summary>
+                  <p className="mt-2 whitespace-pre-wrap break-words leading-relaxed opacity-95">
+                    {seatSyncBanner.detail}
+                  </p>
+                </details>
+              ) : null}
             </div>
           ) : null}
           <h1 className="text-2xl font-bold text-slate-900">坐席与分配</h1>
           <p className="text-sm text-slate-500 mt-1">
-            按步骤完成：角色 → 坐席（含登录账号与密码）→ 工单自动分配规则。本页仅
-            <span className="font-semibold text-slate-700"> 租户管理员 </span>
-            可见与可配置。
+            角色 → 坐席 → 分配规则。<span className="font-semibold text-slate-700">仅管理员</span>可编辑。
           </p>
         </div>
 
@@ -309,9 +368,9 @@ export default function SeatsAndRolesPage() {
                         {s.label}
                       </span>
                       <span className="text-[11px] text-slate-500 block mt-0.5">
-                        {s.n === 1 && '定义权限包'}
-                        {s.n === 2 && '账号密码用于坐席登录'}
-                        {s.n === 3 && '按平台/店铺/类型路由'}
+                        {s.n === 1 && '权限包'}
+                        {s.n === 2 && '账号与登录'}
+                        {s.n === 3 && '平台/店铺/类型'}
                       </span>
                     </span>
                   </button>
@@ -329,7 +388,7 @@ export default function SeatsAndRolesPage() {
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <Shield className="w-5 h-5 text-[#F97316]" />
-                <h2 className="text-lg font-bold text-slate-900">第一步 · 自定义角色</h2>
+                <h2 className="text-lg font-bold text-slate-900">1 · 角色</h2>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -358,16 +417,17 @@ export default function SeatsAndRolesPage() {
                   <div>
                     <p className="font-bold text-slate-900">{r.name}</p>
                     <p className="text-sm text-slate-500 mt-0.5">{r.description || '—'}</p>
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {r.permissionKeys.map((k) => (
-                        <span
-                          key={k}
-                          className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-medium"
-                        >
-                          {PERMISSION_PRESETS.find((p) => p.key === k)?.label || k}
-                        </span>
-                      ))}
-                    </div>
+                    <p className="text-sm text-slate-600 mt-2 leading-relaxed">
+                      <span className="font-semibold text-slate-700">权限</span>
+                      {': '}
+                      {templateLabel(detectTemplateId(r.permissionKeys))}
+                      {(() => {
+                        const tid = detectTemplateId(r.permissionKeys);
+                        if (tid === 'custom') return ' — 已逐项配置';
+                        const meta = SEAT_ROLE_TEMPLATES.find((t) => t.id === tid);
+                        return meta ? ` — ${meta.description}` : '';
+                      })()}
+                    </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button
@@ -398,7 +458,7 @@ export default function SeatsAndRolesPage() {
             <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <UserCog className="w-5 h-5 text-[#F97316]" />
-                <h2 className="text-lg font-bold text-slate-900">第二步 · 客服坐席</h2>
+                <h2 className="text-lg font-bold text-slate-900">2 · 坐席</h2>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -445,7 +505,7 @@ export default function SeatsAndRolesPage() {
                       <td className="px-6 py-4 text-slate-700 font-mono text-xs">{s.account}</td>
                       <td className="px-6 py-4 text-slate-600">{s.email}</td>
                       <td className="px-6 py-4 text-slate-500 text-xs">
-                        {s.loginPasswordConfigured ? '已设置（不明文展示）' : '—'}
+                        {s.loginPasswordConfigured ? '已设置' : '—'}
                       </td>
                       <td className="px-6 py-4 text-slate-700">{roleName(s.roleId)}</td>
                       <td className="px-6 py-4">
@@ -500,7 +560,7 @@ export default function SeatsAndRolesPage() {
 
       {roleModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-hidden flex flex-col">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
               <h3 className="text-lg font-bold text-slate-900">{editingRole ? '编辑角色' : '新建角色'}</h3>
               <button
@@ -522,28 +582,80 @@ export default function SeatsAndRolesPage() {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-500">说明</label>
+                <label className="text-xs font-medium text-slate-500">描述</label>
                 <textarea
                   value={roleForm.description}
                   onChange={(e) => setRoleForm((p) => ({ ...p, description: e.target.value }))}
                   rows={2}
                   className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316] outline-none resize-none"
-                  placeholder="职责简述"
+                  placeholder="可选"
                 />
               </div>
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-slate-500">权限</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {PERMISSION_PRESETS.map((p) => (
-                    <label key={p.key} className="flex items-center gap-2 text-sm cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={roleForm.permissionKeys.includes(p.key)}
-                        onChange={() => togglePermission(p.key)}
-                        className="rounded border-slate-300 text-[#F97316] focus:ring-[#F97316]"
-                      />
-                      {p.label}
-                    </label>
+              <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50/80 p-4">
+                <label htmlFor="seat-role-template" className="text-xs font-semibold text-slate-600">
+                  权限包（快捷预设）
+                </label>
+                <p className="text-[11px] text-slate-500 leading-relaxed mb-2">
+                  先选岗位预设一键填充，再在下方勾选微调；与任一预设完全一致时会显示对应包名。
+                </p>
+                {(() => {
+                  const resolved = detectTemplateId(roleForm.permissionKeys);
+                  const selectValue = resolved === 'custom' ? '__custom__' : resolved;
+                  return (
+                    <select
+                      id="seat-role-template"
+                      value={selectValue}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '__custom__') return;
+                        setRoleForm((f) => ({
+                          ...f,
+                          permissionKeys: permissionKeysForTemplate(v as SeatRoleTemplateId),
+                        }));
+                      }}
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm bg-white outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+                    >
+                      <option value="__custom__" disabled={selectValue !== '__custom__'}>
+                        自定义（逐项勾选）
+                      </option>
+                      {SEAT_ROLE_TEMPLATES.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.label}
+                        </option>
+                      ))}
+                  </select>
+                );
+              })()}
+            </div>
+            <div className="space-y-3 rounded-xl border border-slate-200 p-4">
+                <p className="text-xs font-semibold text-slate-600">具体权限（精简）</p>
+                
+                <div className="space-y-4 max-h-[min(42vh,320px)] overflow-y-auto pr-1">
+                  {SEAT_PERMISSION_EDITOR_GROUPS.map((group) => (
+                    <div key={group.title}>
+                      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                        {group.title}
+                      </p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-2">
+                        {group.items.map(({ key, label }) => {
+                          const checked = roleForm.permissionKeys.includes(key);
+                          return (
+                            <label
+                              key={key}
+                              className="inline-flex items-center gap-2 text-sm text-slate-700 cursor-pointer select-none"
+                            >
+                              <input
+                                type="checkbox"
+                                className="rounded border-slate-300 text-[#F97316] focus:ring-[#F97316]/30"
+                                checked={checked}
+                                onChange={(e) => toggleRolePermissionKey(key, e.target.checked)}
+                              />
+                              <span>{label}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -584,7 +696,7 @@ export default function SeatsAndRolesPage() {
             </div>
             <div className="p-6 space-y-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-500">显示名称</label>
+                <label className="text-xs font-medium text-slate-500">名称</label>
                 <input
                   value={seatForm.displayName}
                   onChange={(e) => setSeatForm((p) => ({ ...p, displayName: e.target.value }))}
@@ -597,7 +709,7 @@ export default function SeatsAndRolesPage() {
                   value={seatForm.account}
                   onChange={(e) => setSeatForm((p) => ({ ...p, account: e.target.value }))}
                   className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316] font-mono"
-                  placeholder="用于坐席登录的唯一账号"
+                  placeholder="登录用户名"
                   autoComplete="username"
                 />
               </div>
@@ -608,12 +720,12 @@ export default function SeatsAndRolesPage() {
                   value={seatForm.password}
                   onChange={(e) => setSeatForm((p) => ({ ...p, password: e.target.value }))}
                   className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
-                  placeholder="初始密码，接入后端后应加密存储"
+                  placeholder="初始密码"
                   autoComplete="new-password"
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-500">邮箱（联系与通知）</label>
+                <label className="text-xs font-medium text-slate-500">邮箱</label>
                 <input
                   type="email"
                   value={seatForm.email}

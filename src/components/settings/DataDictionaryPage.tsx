@@ -2,17 +2,26 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Database, Plus, Search, Edit2, Trash2, X } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
+import { RETURN_CARRIER_DICT_ID, RETURN_CARRIER_SEED_ITEMS } from '@/src/lib/afterSalesFieldOptions';
 
 // Mock Dictionary Data
 const DICTIONARIES = [
   { id: 'after_sales_type', name: '售后类型', description: '全局统一分类（包含AI意图、模板场景、售后问题归因等）', type: 'dropdown', isRequired: true },
   { id: 'resolution', name: '处理方式', description: '客服处理售后的方式，如：仅退款、退货退款、换货等', type: 'dropdown', isRequired: true },
   { id: 'receiver', name: '签收方/退件仓', description: '退货包裹的接收仓库或负责部门', type: 'dropdown', isRequired: true },
+  {
+    id: RETURN_CARRIER_DICT_ID,
+    name: '退回承运商',
+    description: '退货物流常用承运商，供售后表单下拉选用',
+    type: 'dropdown',
+    isRequired: false,
+  },
 ];
 
 const DICT_ITEMS: Record<string, { id: string; label: string; value: string; status: 'active' | 'disabled' }[]> = {
   'after_sales_type': [
     { id: '1', label: '物流问题', value: 'logistics', status: 'active' },
+    { id: 'as-refund', label: '售后退款', value: 'after_sales_refund', status: 'active' },
     { id: '2', label: '质量问题', value: 'quality', status: 'active' },
     { id: '3', label: '发错货', value: 'wrong_item', status: 'active' },
     { id: '4', label: '少发漏发', value: 'missing_part', status: 'active' },
@@ -31,7 +40,8 @@ const DICT_ITEMS: Record<string, { id: string; label: string; value: string; sta
     { id: '1', label: '美东一号仓', value: 'us_east_1', status: 'active' },
     { id: '2', label: '美西二号仓', value: 'us_west_2', status: 'active' },
     { id: '3', label: '欧洲中心仓', value: 'eu_central', status: 'active' },
-  ]
+  ],
+  [RETURN_CARRIER_DICT_ID]: RETURN_CARRIER_SEED_ITEMS.map((i) => ({ ...i })),
 };
 
 export default function DataDictionaryPage() {
@@ -118,7 +128,7 @@ export default function DataDictionaryPage() {
           <div>
             <h1 className="text-2xl font-bold text-slate-900">字段管理</h1>
             <p className="text-sm text-slate-500 mt-1">
-              维护售后类型、处理方式、签收方等字典数据，供表单与业务规则引用
+              维护售后类型、处理方式、签收方、退回承运商等字典数据，供表单与业务规则引用
             </p>
           </div>
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100 text-[#F97316] shrink-0">

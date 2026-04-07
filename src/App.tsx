@@ -23,6 +23,8 @@ import RoutingRulesPage from './components/settings/RoutingRulesPage';
 import SettingsIndexRedirect from './components/settings/SettingsIndexRedirect';
 import TranslationSettingsPage from './components/settings/TranslationSettingsPage';
 import KnowledgeBasePage from './components/settings/KnowledgeBasePage';
+import MotherSystemSyncPage from './components/settings/MotherSystemSyncPage';
+import AdminRoute from './components/auth/AdminRoute';
 
 // Placeholder components
 const Insights = () => <div className="p-8">Insights</div>;
@@ -63,6 +65,14 @@ export default function App() {
             <Route path="rules" element={<AutoReplyRulesPage />} />
             <Route path="dictionary" element={<DataDictionaryPage />} />
           </Route>
+          <Route
+            path="/admin/system-sync"
+            element={
+              <AdminRoute>
+                <MotherSystemSyncPage />
+              </AdminRoute>
+            }
+          />
         </Route>
         
         <Route path="*" element={<Navigate to="/" />} />

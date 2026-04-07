@@ -5,10 +5,10 @@ info:
   description: |
     与 PRD_Backend_Detailed 对齐。鉴权：请求头 `X-Tenant-Id`（必填）、`X-User-Id`（可选，演示用已存在用户 id）。
 servers:
-  - url: http://localhost:4001
-    description: 本地后端直连（默认 PORT）
   - url: http://localhost:4000
-    description: 经前端 Vite 同源代理（npm run dev:api）
+    description: 本地后端直连（默认 PORT）
+  - url: http://localhost:4001
+    description: 经前端 Vite 同源代理（npm run dev:api，浏览器站点根）
 
 tags:
   - name: tickets
@@ -80,6 +80,13 @@ components:
           items: { type: string }
         assignedSeatId: { type: string, nullable: true }
         ownerUserId: { type: string, nullable: true }
+        channelDefaultCurrency:
+          { type: string, nullable: true, description: 母系统 platform-site 店铺默认货币 ISO }
+        channelPlatformLanguage:
+          { type: string, nullable: true, description: 母系统 platform-site 平台/站点语言 }
+        motherConversationLinked:
+          type: boolean
+          description: 是否已关联母系统会话（externalId），本地无消息时可提示同步
     Message:
       type: object
       properties:
@@ -143,6 +150,8 @@ components:
           items: { type: string }
         amount: { type: number }
         currency: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
         orderStatus: { type: string }
         shippingStatus: { type: string }
         trackingNumber: { type: string, nullable: true }
@@ -165,6 +174,15 @@ components:
             messages:
               type: array
               items: { $ref: '#/components/schemas/Message' }
+            messagesTotal:
+              type: integer
+              description: 工单消息总条数（可能大于本次返回的 messages 长度）
+            messagesLimit:
+              type: integer
+              description: 本次请求应用的消息条数上限（includeMessages=0 时为 0）
+            includeMessages:
+              type: boolean
+              description: 本次响应是否包含 messages 列表
             customer:
               allOf:
                 - $ref: '#/components/schemas/Customer'
@@ -222,6 +240,7 @@ paths:
           schema: { type: string, enum: [unread, unreplied, replied] }
         - name: search
           in: query
+          description: 匹配主题/原文主题/意图、关联订单 platformOrderId、或完整工单 UUID
           schema: { type: string }
         - name: filter
           in: query
@@ -252,6 +271,14 @@ paths:
           in: path
           required: true
           schema: { type: string, format: uuid }
+        - name: messagesLimit
+          in: query
+          description: 返回最近若干条消息（升序），默认由 TICKET_DETAIL_MESSAGES_LIMIT 控制，最大 2000
+          schema: { type: integer, minimum: 50, maximum: 2000 }
+        - name: includeMessages
+          in: query
+          description: 设为 0 时不返回 messages（仅工单元数据），用于首包瘦身
+          schema: { type: string, enum: ['0', '1'] }
       responses:
         '200':
           content:
@@ -287,6 +314,37 @@ paths:
               schema: { $ref: '#/components/schemas/Ticket' }
 
   /api/tickets/{id}/messages:
+    get:
+      tags: [tickets]
+      summary: 历史消息分页（早于 before 的若干条，时间升序返回）
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/UserId'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: before
+          in: query
+          description: ISO 时间游标，仅返回严格早于此时间的消息
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 20, maximum: 500, default: 100 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages, hasMore]
+                properties:
+                  messages:
+                    type: array
+                    items: { $ref: '#/components/schemas/Message' }
+                  hasMore: { type: boolean }
+        '400': { description: Invalid before }
+        '404': { description: Not found }
     post:
       tags: [tickets]
       summary: 发送消息或内部备注
@@ -327,6 +385,10 @@ paths:
       summary: 订单详情
       parameters:
         - $ref: '#/components/parameters/TenantId'
+        - name: upstreamEnrich
+          in: query
+          description: 设为 1 时同步请求母系统补全地址/单号（默认不请求，缩短响应）
+          schema: { type: string, enum: ['0', '1'] }
         - name: id
           in: path
           required: true
@@ -428,6 +490,128 @@ paths:
                 type: object
                 properties:
                   suggestion: { type: string }
+
+  /api/ai/classify-intent:
+    post:
+      tags: [ai]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticketId]
+              properties:
+                ticketId: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  intent: { type: string }
+
+  /api/ai/polish:
+    post:
+      tags: [ai]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticketId, draftText]
+              properties:
+                ticketId: { type: string, format: uuid }
+                draftText: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  polished: { type: string }
+
+  /api/ai/recognize-after-sales:
+    post:
+      tags: [ai]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [buyerFeedback]
+              properties:
+                buyerFeedback: { type: string }
+                maxRefund: { type: number }
+                currency: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: object }
+
+  /api/ai/summarize-messages:
+    post:
+      tags: [ai]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role: { type: string, enum: [system, user, assistant] }
+                      content: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  summary: { type: string }
+
+  /api/ai/translate:
+    post:
+      tags: [ai]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text, targetLang]
+              properties:
+                text: { type: string }
+                targetLang: { type: string }
+                sourceLang: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  translated: { type: string }
 
   /api/dashboard/inbox-metrics:
     get:
@@ -540,6 +724,13 @@ paths:
           in: path
           required: true
           schema: { type: string, format: uuid }
+
+  /api/settings/routing-rule-options:
+    get:
+      summary: 分配规则下拉数据（平台类型去重、渠道列表、售后类型字典）
+      tags: [settings]
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
 
   /api/settings/ticket-routing-rules:
     get:

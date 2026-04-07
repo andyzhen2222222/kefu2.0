@@ -1,9 +1,56 @@
-import { intellideskConfigured } from '@/src/services/intellideskApi';
+import { useState, useEffect } from 'react';
+import {
+  intellideskConfigured,
+  subscribeToGlobalApiError,
+  getGlobalApiError,
+  setGlobalApiError,
+} from '@/src/services/intellideskApi';
+import { AlertCircle, RotateCw } from 'lucide-react';
 
 /**
- * 开发态提示当前是「内置演示数据」还是「自建后端」，避免误用 npm run dev 却以为在联调。
+ * 开发态提示当前是「内置演示数据」还是「自建后端」，避免误用 npm run dev却以为在联调。
  */
 export default function IntellideskSourceStrip() {
+  const [globalError, setGlobalError] = useState<string | null>(getGlobalApiError());
+
+  useEffect(() => {
+    return subscribeToGlobalApiError((err) => setGlobalError(err));
+  }, []);
+
+  const handleRetry = () => {
+    window.location.reload();
+  };
+
+  /** 生产环境也展示全局 API/AI 错误，便于用户看到失败原因 */
+  if (globalError) {
+    return (
+      <div
+        className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-1.5 text-center text-xs text-red-900"
+        role="alert"
+      >
+        <div className="flex items-center justify-center gap-2 flex-wrap">
+          <AlertCircle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+          <span className="font-bold shrink-0">提示：</span>
+          <span className="text-left max-w-3xl" title={globalError}>
+            {globalError}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setGlobalApiError(null);
+              handleRetry();
+            }}
+            className="ml-1 p-1 hover:bg-red-100 rounded-md transition-colors flex items-center gap-1 font-bold text-red-700"
+            title="清除提示并刷新"
+          >
+            <RotateCw className="w-3 h-3" />
+            重试
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!import.meta.env.DEV) return null;
 
   const live = intellideskConfigured();
@@ -13,20 +60,15 @@ export default function IntellideskSourceStrip() {
   if (live) {
     return (
       <div
-        className="shrink-0 border-b border-emerald-200 bg-emerald-50 px-4 py-1.5 text-center text-xs text-emerald-900 space-y-1"
+        className="shrink-0 border-b px-4 py-1.5 text-center text-xs space-y-1 transition-colors bg-emerald-50 border-emerald-200 text-emerald-900"
         role="status"
       >
-        <div>
+        <div className="flex items-center justify-center gap-2">
           <span className="font-semibold">Live API</span>
-          <span className="mx-2 text-emerald-700/80">|</span>
-          <span className="font-mono text-[11px]">{base || '（未解析到地址）'}</span>
-          <span className="ml-2 text-emerald-800/70">vite mode: {mode}</span>
+          <span className="mx-2 opacity-30">|</span>
+          <span className="font-mono text-[11px] opacity-70">{base || '（未解析到地址）'}</span>
+          <span className="ml-2 opacity-50 text-[10px]">mode: {mode}</span>
         </div>
-        <p className="text-[11px] text-emerald-800/85 leading-snug max-w-3xl mx-auto">
-          收件箱为空时：在 <code className="rounded bg-emerald-100/90 px-1">backend</code> 执行{' '}
-          <code className="rounded bg-emerald-100/90 px-1">npm run db:seed</code>（全量演示）。
-          <code className="rounded bg-emerald-100/90 px-1">db:seed:production</code> 不含工单/订单/售后。
-        </p>
       </div>
     );
   }
@@ -41,7 +83,7 @@ export default function IntellideskSourceStrip() {
       <span>
         你当前是 <strong>纯演示模式</strong>（<code className="rounded bg-amber-200/80 px-1">npm run dev</code> /{' '}
         <code className="rounded bg-amber-200/80 px-1">dev:mock</code>，端口 3000）。要看真实数据：改跑{' '}
-        <code className="rounded bg-amber-200/80 px-1">npm run dev:api</code>（端口 4000，代理到后端 4001），并另开终端{' '}
+        <code className="rounded bg-amber-200/80 px-1">npm run dev:api</code>（端口 4001，代理到后端 4000），并另开终端{' '}
         <code className="rounded bg-amber-200/80 px-1">cd backend && npm run dev</code>、数据库已就绪。
       </span>
       <span className="ml-2 text-amber-800/80">vite mode: {mode}</span>

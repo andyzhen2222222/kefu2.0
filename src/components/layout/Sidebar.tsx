@@ -12,7 +12,7 @@ import { cn } from '@/src/lib/utils';
 
 const navItems = [
   { icon: LayoutDashboard, label: '工作台', path: '/' },
-  { icon: Inbox, label: '收件箱', path: '/mailbox' },
+  { icon: Inbox, label: '工单', path: '/mailbox' },
   { icon: RotateCcw, label: '售后管理', path: '/after-sales' },
   { icon: Settings, label: '设置', path: '/settings' },
 ];
@@ -28,9 +28,10 @@ export default function Sidebar() {
             title={item.label}
             className={({ isActive }) => {
               const isSettingsActive = item.path === '/settings' && window.location.pathname.startsWith('/settings');
+              const isMailboxActive = item.label === '工单' && window.location.pathname.startsWith('/mailbox');
               return cn(
               "flex items-center justify-center w-12 h-12 rounded-xl transition-all group relative",
-              isActive || isSettingsActive
+              isActive || isSettingsActive || isMailboxActive
                 ? "bg-orange-50 text-[#F97316]" 
                 : "text-slate-400 hover:text-slate-700 hover:bg-slate-50"
             )}}

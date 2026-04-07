@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, Save, Trash2 } from 'lucide-react';
+import { Plus, Save, Trash2, Pencil } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import AddSLARuleModal, { type NewSlaRulePayload } from './AddSLARuleModal';
 import { useAuth } from '@/src/hooks/useAuth';
@@ -11,26 +11,64 @@ import {
   createSlaRule,
   patchSlaRule,
   deleteSlaRule,
+  fetchRoutingRuleOptions,
   type ApiSlaRuleRow,
 } from '@/src/services/intellideskApi';
 
-function channelBadge(rule: ApiSlaRuleRow): { label: string; className: string } {
-  const p = rule.channelPattern?.toLowerCase() ?? '';
-  if (!p || p === '%') return { label: '全平台', className: 'bg-slate-100 text-slate-700' };
-  if (p.includes('amazon')) return { label: 'Amazon', className: 'bg-blue-100 text-blue-700' };
-  if (p.includes('ebay')) return { label: 'eBay', className: 'bg-purple-100 text-purple-700' };
-  if (p.includes('shopify')) return { label: 'Shopify', className: 'bg-green-100 text-green-700' };
-  return { label: '自定义', className: 'bg-amber-100 text-amber-800' };
+import { platformGroupLabelFromType } from '@/src/lib/platformLabels';
+
+function channelBadge(rule: ApiSlaRuleRow, platforms: { value: string; label: string }[] = []): { label: string; className: string } {
+  const raw = rule.channelPattern ?? '';
+  // 1. 全平台/未设置识别
+  if (!raw || raw === '%' || raw.toLowerCase() === 'all' || raw.toLowerCase() === 'global') {
+    return { label: '全平台', className: 'bg-slate-100 text-slate-700' };
+  }
+  
+  const clean = raw.replace(/[%[\]]/g, '').trim(); // 移除 SQL % 或可能的方括号
+  const lowerClean = clean.toLowerCase();
+
+  // 2. 优先从租户平台列表中寻找精确或模糊匹配（处理如 Amazon vs Amazon_SP_API）
+  const matched = platforms.find((pl) => {
+    const val = pl.value.toLowerCase();
+    return val === lowerClean || lowerClean === val.replace(/_.*$/, '') || val === lowerClean.replace(/_.*$/, '');
+  });
+  
+  if (matched) {
+    // 优先使用租户配置的 Label，其次尝试标准格式化
+    const displayLabel = matched.label || platformGroupLabelFromType(matched.value) || clean;
+    let className = 'bg-indigo-100 text-indigo-700';
+    const lowerValue = matched.value.toLowerCase();
+    if (lowerValue.includes('amazon')) className = 'bg-blue-100 text-blue-700';
+    else if (lowerValue.includes('ebay')) className = 'bg-purple-100 text-purple-700';
+    else if (lowerValue.includes('shopify')) className = 'bg-green-100 text-green-700';
+    return { label: displayLabel, className };
+  }
+
+  // 3. 兜底内置标准格式化（使用统一的平台标签转换工具）
+  const stdLabel = platformGroupLabelFromType(clean);
+  if (stdLabel) {
+    let className = 'bg-amber-100 text-amber-800';
+    const l = stdLabel.toLowerCase();
+    if (l.includes('amazon')) className = 'bg-blue-100 text-blue-700';
+    else if (l.includes('ebay')) className = 'bg-purple-100 text-purple-700';
+    else if (l.includes('shopify')) className = 'bg-green-100 text-green-700';
+    return { label: stdLabel, className };
+  }
+  
+  // 4. 最后兜底：直接显示清理后的内容
+  return { label: clean, className: 'bg-amber-100 text-amber-800' };
 }
 
 export default function SLAPage() {
   const { user } = useAuth();
   const apiOn = intellideskConfigured();
   const [isAddSLAModalOpen, setIsAddSLAModalOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState<ApiSlaRuleRow | null>(null);
   const [rows, setRows] = useState<ApiSlaRuleRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [savingModal, setSavingModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [platforms, setPlatforms] = useState<{ value: string; label: string }[]>([]);
 
   const tenantId = intellideskTenantId();
   const userId = intellideskUserIdForApi(user?.id);
@@ -40,8 +78,12 @@ export default function SLAPage() {
     setLoading(true);
     setError(null);
     try {
-      const list = await fetchSlaRules(tenantId, userId);
+      const [list, opts] = await Promise.all([
+        fetchSlaRules(tenantId, userId),
+        fetchRoutingRuleOptions(tenantId, userId),
+      ]);
       setRows(list);
+      setPlatforms(opts.platforms);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -53,18 +95,29 @@ export default function SLAPage() {
     void reload();
   }, [reload]);
 
-  const handleCreate = async (payload: NewSlaRulePayload) => {
+  const handleSave = async (payload: NewSlaRulePayload) => {
     if (!apiOn) return;
     setSavingModal(true);
     setError(null);
     try {
-      await createSlaRule(tenantId, userId, {
-        name: payload.name,
-        channelPattern: payload.channelPattern,
-        warningHours: payload.warningHours,
-        timeoutHours: payload.timeoutHours,
-        conditions: payload.conditions,
-      });
+      if (editingRule) {
+        await patchSlaRule(tenantId, userId, editingRule.id, {
+          name: payload.name,
+          channelPattern: payload.channelPattern,
+          warningHours: payload.warningHours,
+          timeoutHours: payload.timeoutHours,
+          conditions: payload.conditions,
+        });
+      } else {
+        await createSlaRule(tenantId, userId, {
+          name: payload.name,
+          channelPattern: payload.channelPattern,
+          warningHours: payload.warningHours,
+          timeoutHours: payload.timeoutHours,
+          conditions: payload.conditions,
+        });
+      }
+      setEditingRule(null);
       await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -105,7 +158,10 @@ export default function SLAPage() {
           </div>
           <button
             type="button"
-            onClick={() => setIsAddSLAModalOpen(true)}
+            onClick={() => {
+              setEditingRule(null);
+              setIsAddSLAModalOpen(true);
+            }}
             className="px-4 py-2 bg-[#F97316] hover:bg-orange-600 text-white rounded-xl text-sm font-bold transition-colors shadow-sm flex items-center gap-2"
           >
             <Plus className="w-4 h-4" />
@@ -125,7 +181,7 @@ export default function SLAPage() {
                 <p className="text-sm text-slate-500">暂无规则，点击「添加规则」创建。</p>
               )}
               {rows.map((rule) => {
-                const badge = channelBadge(rule);
+                const badge = channelBadge(rule, platforms);
                 return (
                   <div
                     key={rule.id}
@@ -158,6 +214,17 @@ export default function SLAPage() {
                         </label>
                         <button
                           type="button"
+                          title="修改"
+                          onClick={() => {
+                            setEditingRule(rule);
+                            setIsAddSLAModalOpen(true);
+                          }}
+                          className="p-2 text-slate-400 hover:text-blue-600 rounded-lg"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
                           title="删除"
                           onClick={() => void removeRule(rule.id)}
                           className="p-2 text-slate-400 hover:text-red-600 rounded-lg"
@@ -188,69 +255,45 @@ export default function SLAPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="p-5 border border-slate-200 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <span className="px-2.5 py-1 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold">
-                      Amazon
-                    </span>
-                    <h3 className="font-bold text-slate-900">标准回复时效</h3>
+              {[
+                { name: '标准回复时效', platform: 'Amazon', timeout: 24, warning: 2, condition: '所有 Amazon 消息' },
+                { name: '周末回复时效', platform: 'eBay', timeout: 48, warning: 4, condition: '周六、周日' },
+              ].map((demo, idx) => {
+                const badge = channelBadge({ channelPattern: demo.platform } as any, []);
+                return (
+                  <div key={idx} className="p-5 border border-slate-200 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <span className={cn('px-2.5 py-1 rounded-lg text-xs font-bold', badge.className)}>
+                          {badge.label}
+                        </span>
+                        <h3 className="font-bold text-slate-900">{demo.name}</h3>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-slate-600">目标: {demo.timeout}小时</span>
+                        <label className="relative inline-flex items-center cursor-pointer ml-4">
+                          <input type="checkbox" className="sr-only peer" defaultChecked readOnly />
+                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#F97316]" />
+                        </label>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div className="space-y-1">
+                        <span className="text-slate-500">警告阈值 (Warning)</span>
+                        <p className="font-medium text-slate-900">剩余 {demo.warning} 小时</p>
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-slate-500">超时阈值 (Timeout)</span>
+                        <p className="font-medium text-slate-900">{demo.timeout} 小时</p>
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-slate-500">适用条件</span>
+                        <p className="font-medium text-slate-900">{demo.condition}</p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-slate-600">目标: 24小时</span>
-                    <label className="relative inline-flex items-center cursor-pointer ml-4">
-                      <input type="checkbox" className="sr-only peer" defaultChecked readOnly />
-                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#F97316]" />
-                    </label>
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-4 text-sm">
-                  <div className="space-y-1">
-                    <span className="text-slate-500">警告阈值 (Warning)</span>
-                    <p className="font-medium text-slate-900">剩余 2 小时</p>
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-slate-500">超时阈值 (Timeout)</span>
-                    <p className="font-medium text-slate-900">24 小时</p>
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-slate-500">适用条件</span>
-                    <p className="font-medium text-slate-900">所有 Amazon 消息</p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-5 border border-slate-200 rounded-xl bg-slate-50/50 hover:bg-slate-50 transition-colors">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <span className="px-2.5 py-1 bg-purple-100 text-purple-700 rounded-lg text-xs font-bold">
-                      eBay
-                    </span>
-                    <h3 className="font-bold text-slate-900">周末回复时效</h3>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-slate-600">目标: 48小时</span>
-                    <label className="relative inline-flex items-center cursor-pointer ml-4">
-                      <input type="checkbox" className="sr-only peer" defaultChecked readOnly />
-                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#F97316]" />
-                    </label>
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-4 text-sm">
-                  <div className="space-y-1">
-                    <span className="text-slate-500">警告阈值 (Warning)</span>
-                    <p className="font-medium text-slate-900">剩余 4 小时</p>
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-slate-500">超时阈值 (Timeout)</span>
-                    <p className="font-medium text-slate-900">48 小时</p>
-                  </div>
-                  <div className="space-y-1">
-                    <span className="text-slate-500">适用条件</span>
-                    <p className="font-medium text-slate-900">周六、周日</p>
-                  </div>
-                </div>
-              </div>
+                );
+              })}
               <p className="text-xs text-slate-500">
                 未配置 VITE_API_BASE_URL 时为演示静态数据；配置后可读写后端 SLA 规则。
               </p>
@@ -273,9 +316,14 @@ export default function SLAPage() {
 
       <AddSLARuleModal
         isOpen={isAddSLAModalOpen}
-        onClose={() => setIsAddSLAModalOpen(false)}
-        onSubmit={apiOn ? handleCreate : undefined}
+        onClose={() => {
+          setIsAddSLAModalOpen(false);
+          setEditingRule(null);
+        }}
+        onSubmit={apiOn ? handleSave : undefined}
         submitting={savingModal}
+        initialData={editingRule}
+        platforms={platforms}
       />
     </div>
   );

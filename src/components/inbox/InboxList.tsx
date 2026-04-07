@@ -1,16 +1,22 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Filter, Inbox, ChevronDown, ChevronRight, Store, ArrowUpDown } from 'lucide-react';
+import { Search, Filter, Inbox, ChevronDown, ChevronRight, Store, ArrowUpDown, RefreshCw, Loader2, Plus } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { Ticket, TicketStatus, Order, Customer, Sentiment } from '@/src/types';
 import { formatDistanceToNow } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import { InboxTicketStatusIcons } from '@/src/lib/ticketStatusUi';
-import {
-  getTranslationSettings,
-  getTicketSubjectForDisplay,
-} from '@/src/components/settings/TranslationSettingsPage';
+import { getTicketSubjectForDisplay } from '@/src/components/settings/TranslationSettingsPage';
 import { platformGroupLabelForTicket } from '@/src/lib/platformLabels';
+import { useAuth } from '@/src/hooks/useAuth';
+import {
+  intellideskConfigured,
+  intellideskTenantId,
+  intellideskUserIdForApi,
+  postInboxTicketsSync,
+} from '@/src/services/intellideskApi';
+
+const MOTHER_TOKEN_STORAGE_KEY = 'intellidesk_mother_token';
 
 const SENTIMENT_LABEL: Record<string, string> = {
   [Sentiment.ANGRY]: '愤怒抱怨',
@@ -26,7 +32,28 @@ const ORDER_STATUS_LABEL: Record<string, string> = {
   partial_refund: '部分退款',
 };
 
-type ConversationFilter = '' | 'needs_attention' | 'replied' | 'sla_overdue';
+const INBOX_PREVIEW_MAX = 30;
+
+/** 列表第二行：优先展示最近一条买家消息摘要，否则回退主题 */
+function inboxListPreviewLine(ticket: Ticket): string {
+  const raw = ticket.lastInboundPreview?.trim();
+  if (raw) {
+    const oneLine = raw.replace(/\s+/g, ' ');
+    return oneLine.length > INBOX_PREVIEW_MAX
+      ? `${oneLine.slice(0, INBOX_PREVIEW_MAX)}…`
+      : oneLine;
+  }
+  return getTicketSubjectForDisplay(ticket);
+}
+
+function inboxListPreviewTitle(ticket: Ticket): string {
+  const raw = ticket.lastInboundPreview?.trim();
+  if (raw) return raw.replace(/\s+/g, ' ');
+  return getTicketSubjectForDisplay(ticket);
+}
+
+type ConversationStatusFilter = '' | 'unread' | 'unreplied' | 'replied';
+type SlaFilter = '' | 'overdue';
 
 interface InboxListProps {
   tickets: Ticket[];
@@ -35,6 +62,15 @@ interface InboxListProps {
   selectedTicketId?: string;
   /** 例如 ?filter=unread，与仪表盘入口一致 */
   mailboxSearchSuffix?: string;
+  /** 母系统收件箱同步完成后刷新列表（由 MailboxPage 触发重新拉取） */
+  onInboxSynced?: () => void;
+  /** 悬停列表行时预取工单详情（减轻点击后首包等待） */
+  onTicketHover?: (ticketId: string) => void;
+  /** 联调：由父组件传入搜索框内容（与 GET /api/tickets?search= 同步） */
+  listSearchQuery?: string;
+  onListSearchQueryChange?: (q: string) => void;
+  /** 为 true 时不在本地再按搜索词过滤（列表已由后端按 search 筛过） */
+  listSearchServerBacked?: boolean;
 }
 
 export default function InboxList({
@@ -43,17 +79,28 @@ export default function InboxList({
   customers = {},
   selectedTicketId,
   mailboxSearchSuffix = '',
+  onInboxSynced,
+  onTicketHover,
+  listSearchQuery: listSearchQueryProp,
+  onListSearchQueryChange,
+  listSearchServerBacked = false,
 }: InboxListProps) {
   const navigate = useNavigate();
-  const autoTranslateEnabled = getTranslationSettings().autoTranslateEnabled;
-  const [searchQuery, setSearchQuery] = useState('');
+  const { user } = useAuth();
+  const [localSearchQuery, setLocalSearchQuery] = useState('');
+  const searchControlled = typeof onListSearchQueryChange === 'function';
+  const searchQuery = searchControlled ? (listSearchQueryProp ?? '') : localSearchQuery;
+  const setSearchQuery = searchControlled ? onListSearchQueryChange! : setLocalSearchQuery;
   const [showFilters, setShowFilters] = useState(false);
   const [sortBy, setSortBy] = useState<'time_desc' | 'time_asc' | 'priority'>('time_desc');
   const [filterChannel, setFilterChannel] = useState('');
   const [filterIntent, setFilterIntent] = useState('');
   const [filterSentiment, setFilterSentiment] = useState('');
   const [filterOrderStatus, setFilterOrderStatus] = useState('');
-  const [filterConversation, setFilterConversation] = useState<ConversationFilter>('');
+  const [filterConversationStatus, setFilterConversationStatus] = useState<ConversationStatusFilter>('');
+  const [filterSla, setFilterSla] = useState<SlaFilter>('');
+  const [inboxSyncing, setInboxSyncing] = useState(false);
+  const [inboxSyncHint, setInboxSyncHint] = useState<string | null>(null);
 
   // Tree state
   const [expandedPlatforms, setExpandedPlatforms] = useState<Record<string, boolean>>({});
@@ -75,7 +122,8 @@ export default function InboxList({
     return [...s].sort((a, b) => a.localeCompare(b, 'zh-CN'));
   }, [tickets]);
 
-  const intentOptions = useMemo(() => {
+  /** 列表中的意图标签，产品侧称「售后类型」 */
+  const afterSalesTypeOptions = useMemo(() => {
     const s = new Set<string>();
     tickets.forEach((t) => {
       const v = t.intent?.trim();
@@ -102,45 +150,45 @@ export default function InboxList({
     return [...s].sort();
   }, [tickets, orders]);
 
-  const conversationOptions = useMemo(() => {
-    const opts: { value: ConversationFilter; label: string }[] = [];
-    if (
-      tickets.some(
-        (t) =>
-          t.messageProcessingStatus === 'unread' || t.messageProcessingStatus === 'unreplied'
-      )
-    ) {
-      opts.push({ value: 'needs_attention', label: '待处理（未读/未回复）' });
-    }
-    if (tickets.some((t) => t.messageProcessingStatus === 'replied')) {
-      opts.push({ value: 'replied', label: '已回复' });
-    }
-    if (
-      tickets.some(
-        (t) =>
-          t.status !== TicketStatus.RESOLVED &&
-          t.status !== TicketStatus.SPAM &&
-          new Date(t.slaDueAt).getTime() < Date.now()
-      )
-    ) {
-      opts.push({ value: 'sla_overdue', label: 'SLA 已超时' });
-    }
-    return opts;
-  }, [tickets]);
+  // 1. Stable Sort Logic: Only re-sort on major changes to prevent items "jumping" while interacting
+  const [displayTickets, setDisplayTickets] = useState<Ticket[]>([]);
+  
+  // Track major dependencies that should trigger a full re-sort/re-filter
+  // We don't include 'tickets' directly because we want to handle internal updates separately
+  const majorDepsKey = JSON.stringify({
+    count: tickets.length,
+    sortBy,
+    searchQuery,
+    listSearchServerBacked,
+    filterChannel,
+    filterIntent,
+    filterSentiment,
+    filterOrderStatus,
+    filterConversationStatus,
+    filterSla,
+  });
 
-  const sortedTickets = useMemo(() => {
+  useEffect(() => {
+    // Perform full filtering and sorting
     let result = [...tickets];
 
-    if (searchQuery) {
+    if (searchQuery.trim() && !listSearchServerBacked) {
       const query = searchQuery.trim().toLowerCase();
       result = result.filter((t) => {
         const shown = getTicketSubjectForDisplay(t);
+        const buyerName = customers[t.customerId]?.name ?? '';
+        const platformOrderId = t.orderId ? orders[t.orderId]?.platformOrderId : '';
+
+        const preview = (t.lastInboundPreview ?? '').toLowerCase();
         return (
           shown.toLowerCase().includes(query) ||
+          preview.includes(query) ||
           t.subject.toLowerCase().includes(query) ||
           (t.subjectOriginal?.toLowerCase().includes(query) ?? false) ||
           t.channelId.toLowerCase().includes(query) ||
-          (t.orderId?.toLowerCase().includes(query) ?? false)
+          (t.orderId?.toLowerCase().includes(query) ?? false) ||
+          platformOrderId?.toLowerCase().includes(query) ||
+          buyerName.toLowerCase().includes(query)
         );
       });
     }
@@ -151,13 +199,14 @@ export default function InboxList({
     if (filterOrderStatus) {
       result = result.filter((t) => orders[t.orderId ?? '']?.orderStatus === filterOrderStatus);
     }
-    if (filterConversation === 'needs_attention') {
-      result = result.filter(
-        (t) => t.messageProcessingStatus === 'unread' || t.messageProcessingStatus === 'unreplied'
-      );
-    } else if (filterConversation === 'replied') {
+    if (filterConversationStatus === 'unread') {
+      result = result.filter((t) => t.messageProcessingStatus === 'unread');
+    } else if (filterConversationStatus === 'unreplied') {
+      result = result.filter((t) => t.messageProcessingStatus === 'unreplied');
+    } else if (filterConversationStatus === 'replied') {
       result = result.filter((t) => t.messageProcessingStatus === 'replied');
-    } else if (filterConversation === 'sla_overdue') {
+    }
+    if (filterSla === 'overdue') {
       result = result.filter(
         (t) =>
           t.status !== TicketStatus.RESOLVED &&
@@ -166,34 +215,49 @@ export default function InboxList({
       );
     }
 
-    // Sort
+    // Sort according to PRD: unread (1) > unreplied (2) > replied (3)
     result.sort((a, b) => {
+      // 1. Status priority: 未读 (unread) > 未回复 (unreplied) > 已回复 (replied)
+      const statusWeight: Record<string, number> = { unread: 1, unreplied: 2, replied: 3 };
+      const weightA = statusWeight[a.messageProcessingStatus] || 99;
+      const weightB = statusWeight[b.messageProcessingStatus] || 99;
+
+      if (weightA !== weightB) {
+        return weightA - weightB;
+      }
+
+      // 2. Secondary sort
       if (sortBy === 'time_desc') {
-        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       } else if (sortBy === 'time_asc') {
-        return new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
       } else if (sortBy === 'priority') {
-        return a.priority - b.priority; // Assuming lower number = higher priority
+        return a.priority - b.priority;
       }
       return 0;
     });
 
-    return result;
-  }, [
-    tickets,
-    orders,
-    searchQuery,
-    sortBy,
-    autoTranslateEnabled,
-    filterChannel,
-    filterIntent,
-    filterSentiment,
-    filterOrderStatus,
-    filterConversation,
-  ]);
+    setDisplayTickets(result);
+  }, [majorDepsKey, tickets.length]); // Re-sort on major deps OR when a ticket is added/removed
+
+  // 2. Minor Update Logic: Keep the current order but update the ticket content
+  useEffect(() => {
+    setDisplayTickets((prev) => {
+      let changed = false;
+      const next = prev.map((pt) => {
+        const fresh = tickets.find((t) => t.id === pt.id);
+        if (fresh && fresh !== pt) {
+          changed = true;
+          return fresh;
+        }
+        return pt;
+      });
+      return changed ? next : prev;
+    });
+  }, [tickets]);
 
   const groupedTickets = useMemo(() => {
-    return sortedTickets.reduce((acc, ticket) => {
+    return displayTickets.reduce((acc, ticket) => {
       const platform = platformGroupLabelForTicket(ticket.platformType, ticket.channelId);
       const shop = ticket.channelId;
       if (!acc[platform]) acc[platform] = {};
@@ -201,7 +265,7 @@ export default function InboxList({
       acc[platform][shop].push(ticket);
       return acc;
     }, {} as Record<string, Record<string, Ticket[]>>);
-  }, [sortedTickets]);
+  }, [displayTickets]);
 
   useEffect(() => {
     const pKeys = Object.keys(groupedTickets);
@@ -231,16 +295,71 @@ export default function InboxList({
     setFilterIntent('');
     setFilterSentiment('');
     setFilterOrderStatus('');
-    setFilterConversation('');
+    setFilterConversationStatus('');
+    setFilterSla('');
+  };
+
+  const handleInboxMotherSync = async () => {
+    setInboxSyncHint(null);
+    if (!intellideskConfigured()) {
+      setInboxSyncHint('当前为演示模式，请使用 API 模式后再同步。');
+      return;
+    }
+    let tok = '';
+    try {
+      tok = (localStorage.getItem(MOTHER_TOKEN_STORAGE_KEY) ?? '').trim();
+    } catch {
+      tok = '';
+    }
+    setInboxSyncing(true);
+    try {
+      const r = await postInboxTicketsSync(intellideskTenantId(), intellideskUserIdForApi(user?.id), {
+        ...(tok ? { token: tok } : {}),
+        days: 90,
+        runAi: true,
+        aiMax: 40,
+      });
+      setInboxSyncHint(
+        `已同步：订单 ${r.ordersSynced ?? 0} 条，会话 ${r.conversationsSynced} 条，消息 ${r.messagesSynced} 条；AI 更新意图/情绪 ${r.aiUpdated} 条` +
+          (r.aiFailed ? `（失败 ${r.aiFailed}）` : '') +
+          (r.aiSkippedNoLlm > 0 ? '（未配置 LLM，AI 未执行）' : '')
+      );
+      onInboxSynced?.();
+    } catch (e) {
+      setInboxSyncHint(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInboxSyncing(false);
+    }
   };
 
   return (
     <div className="w-[320px] flex flex-col bg-white border-r border-slate-200/90 shrink-0 h-full">
       {/* Header & Search */}
       <div className="p-4 border-b border-slate-200/90 space-y-2.5">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold text-slate-800 tracking-tight">智能收件箱</h2>
-          <div className="flex items-center gap-1">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-base font-semibold text-slate-800 tracking-tight shrink-0">工单</h2>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              title="手动新建工单"
+              onClick={() => alert('新建工单弹窗（开发中）')}
+              className="p-2 rounded-lg text-slate-500 hover:text-[#F97316] hover:bg-orange-50 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              title="从母系统刷新近 90 天会话与消息，并批量更新 AI 意图与情绪"
+              onClick={() => void handleInboxMotherSync()}
+              disabled={inboxSyncing}
+              className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors disabled:opacity-50"
+            >
+              {inboxSyncing ? (
+                <Loader2 className="w-4 h-4 animate-spin text-[#F97316]" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+            </button>
             <div className="relative group">
               <button className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors">
                 <ArrowUpDown className="w-4 h-4" />
@@ -250,13 +369,13 @@ export default function InboxList({
                   onClick={() => setSortBy('time_desc')}
                   className={cn("w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50", sortBy === 'time_desc' ? "text-[#F97316] font-bold" : "text-slate-700")}
                 >
-                  按时间降序 (默认)
+                  按创建时间降序 (默认)
                 </button>
                 <button 
                   onClick={() => setSortBy('time_asc')}
                   className={cn("w-full text-left px-3 py-1.5 text-xs hover:bg-slate-50", sortBy === 'time_asc' ? "text-[#F97316] font-bold" : "text-slate-700")}
                 >
-                  按时间升序
+                  按创建时间升序
                 </button>
                 <button 
                   onClick={() => setSortBy('priority')}
@@ -277,12 +396,15 @@ export default function InboxList({
             </button>
           </div>
         </div>
-        
+        {inboxSyncHint ? (
+          <p className="text-[11px] leading-snug text-slate-500">{inboxSyncHint}</p>
+        ) : null}
+
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="搜索订单号、买家姓名..."
+            placeholder="搜索平台订单号、主题、买家…"
             className="w-full pl-9 pr-3 py-2 bg-slate-50/90 border border-slate-200/90 focus:bg-white focus:border-slate-300 focus:ring-1 focus:ring-slate-200 rounded-lg text-[13px] text-slate-700 placeholder:text-slate-400 transition-all outline-none"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -298,7 +420,7 @@ export default function InboxList({
                 onChange={(e) => setFilterChannel(e.target.value)}
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
               >
-                <option value="">店铺（全部）</option>
+                <option value="">全部店铺</option>
                 {channelOptions.map((c) => (
                   <option key={c} value={c}>
                     {c}
@@ -310,10 +432,10 @@ export default function InboxList({
                 onChange={(e) => setFilterIntent(e.target.value)}
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
               >
-                <option value="">买家意图（全部）</option>
-                {intentOptions.map((intent) => (
-                  <option key={intent} value={intent}>
-                    {intent}
+                <option value="">全部售后类型</option>
+                {afterSalesTypeOptions.map((label) => (
+                  <option key={label} value={label}>
+                    {label}
                   </option>
                 ))}
               </select>
@@ -322,7 +444,7 @@ export default function InboxList({
                 onChange={(e) => setFilterSentiment(e.target.value)}
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
               >
-                <option value="">买家情绪（全部）</option>
+                <option value="">全部买家情绪</option>
                 {sentimentOptions.map((s) => (
                   <option key={s} value={s}>
                     {SENTIMENT_LABEL[s] ?? s}
@@ -334,7 +456,7 @@ export default function InboxList({
                 onChange={(e) => setFilterOrderStatus(e.target.value)}
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
               >
-                <option value="">订单状态（全部）</option>
+                <option value="">全部订单状态</option>
                 {orderStatusOptions.map((st) => (
                   <option key={st} value={st}>
                     {ORDER_STATUS_LABEL[st] ?? st}
@@ -342,16 +464,22 @@ export default function InboxList({
                 ))}
               </select>
               <select
-                value={filterConversation}
-                onChange={(e) => setFilterConversation(e.target.value as ConversationFilter)}
+                value={filterConversationStatus}
+                onChange={(e) => setFilterConversationStatus(e.target.value as ConversationStatusFilter)}
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
               >
-                <option value="">会话 / SLA（全部）</option>
-                {conversationOptions.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
+                <option value="">全部会话</option>
+                <option value="unread">未读消息</option>
+                <option value="unreplied">待回复</option>
+                <option value="replied">已回复</option>
+              </select>
+              <select
+                value={filterSla}
+                onChange={(e) => setFilterSla(e.target.value as SlaFilter)}
+                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
+              >
+                <option value="">全部 SLA</option>
+                <option value="overdue">SLA 已超时</option>
               </select>
             </div>
             <div className="flex justify-end pt-1">
@@ -369,7 +497,7 @@ export default function InboxList({
 
       {/* Ticket List */}
       <div className="flex-1 overflow-y-auto">
-        {sortedTickets.length === 0 ? (
+        {displayTickets.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full p-8 text-center">
             <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mb-4">
               <Inbox className="w-6 h-6 text-slate-300" />
@@ -428,18 +556,19 @@ export default function InboxList({
                           <div className="ml-2 border border-slate-200/80 rounded-lg overflow-hidden bg-slate-50/50">
                             {shopTickets.map((ticket) => {
                               const order = ticket.orderId ? orders[ticket.orderId] : null;
-                              const subjectLine = getTicketSubjectForDisplay(ticket);
+                              const previewLine = inboxListPreviewLine(ticket);
+                              const previewTitle = inboxListPreviewTitle(ticket);
                               const buyerName = customers[ticket.customerId]?.name ?? '买家';
 
                               const isSelected = selectedTicketId === ticket.id;
                               const showUnreadDot =
-                                ticket.messageProcessingStatus === 'unread' ||
-                                ticket.status === TicketStatus.NEW;
+                                ticket.messageProcessingStatus === 'unread' || ticket.status === TicketStatus.NEW;
 
                               return (
                                 <div
                                   key={ticket.id}
                                   onClick={() => navigate(`/mailbox/${ticket.id}${mailboxSearchSuffix}`)}
+                                  onMouseEnter={() => onTicketHover?.(ticket.id)}
                                   className={cn(
                                     'px-3 py-2.5 cursor-pointer transition-colors relative border-b border-slate-200/70 last:border-b-0',
                                     isSelected
@@ -452,7 +581,7 @@ export default function InboxList({
                                   )}
 
                                   <div className={cn('min-w-0', isSelected ? 'pl-2.5' : 'pl-1')}>
-                                    <div className="flex items-center gap-1.5 min-h-[15px]">
+                                    <div className="flex items-center gap-1.5 min-h-[15px] justify-start">
                                       <span
                                         className={cn(
                                           'w-1 h-1 rounded-full shrink-0',
@@ -461,13 +590,13 @@ export default function InboxList({
                                         aria-hidden
                                       />
                                       <span
-                                        className="text-xs font-medium text-slate-700 truncate min-w-0 flex-1"
+                                        className="text-xs font-bold text-slate-700 truncate min-w-0 flex-1 text-left"
                                         title={buyerName}
                                       >
                                         {buyerName}
                                       </span>
                                       <span className="text-[11px] text-slate-500 tabular-nums shrink-0">
-                                        {formatDistanceToNow(new Date(ticket.updatedAt), {
+                                        {formatDistanceToNow(new Date(ticket.createdAt), {
                                           addSuffix: true,
                                           locale: zhCN,
                                         })}
@@ -478,8 +607,9 @@ export default function InboxList({
                                         'text-[13px] leading-snug line-clamp-2 mt-1',
                                         showUnreadDot ? 'text-slate-800 font-medium' : 'text-slate-600 font-normal'
                                       )}
+                                      title={`${previewTitle}\n完整工单 ID：${ticket.id}`}
                                     >
-                                      {subjectLine}
+                                      {previewLine}
                                     </h3>
                                     {isSelected && (
                                       <div className="mt-2 pt-2 border-t border-slate-200/80 bg-slate-50/50 -mx-3 px-3 pb-0.5 rounded-b-md">

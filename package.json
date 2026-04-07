@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0 --mode mock",
     "dev:mock": "vite --port=3000 --host=0.0.0.0 --mode mock",
-    "dev:api": "vite --port=4000 --host=0.0.0.0 --mode api",
-    "dev:live": "vite --port=4000 --host=0.0.0.0 --mode api",
+    "dev:api": "vite --port=4001 --host=0.0.0.0 --mode api",
+    "dev:stack": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/win-dev-stack.ps1",
+    "dev:live": "vite --port=4001 --host=0.0.0.0 --mode api",
     "intellidesk:setup-db": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-live.ps1",
     "build": "vite build",
     "build:mock": "vite build --mode mock",
@@ -16,7 +17,10 @@
     "preview:mock": "vite preview --port=4173 --host=0.0.0.0 --mode mock",
     "preview:api": "vite preview --port=4173 --host=0.0.0.0 --mode api",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "diag:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/diag-dev.ps1",
+    "smoke:api": "node scripts/smoke-intellidesk-api.mjs",
+    "test:ai": "node scripts/test-ai-all.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

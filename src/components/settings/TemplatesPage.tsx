@@ -32,13 +32,15 @@ import {
 interface Template {
   id: string;
   name: string;
-  platform: string;
-  category: string;
-  categoryValue: string;
+  platforms: string[];
+  categoryValues: string[]; // 统一使用复数形式存 ID
   content: string;
   languages: string[];
   updatedAt: string;
   status: 'active' | 'draft';
+  // 以下字段仅为显示或兼容性保留
+  category?: string; 
+  categoryValue?: string;
 }
 
 function mergePickOption(
@@ -63,10 +65,9 @@ function templateToDraft(t: Template): TemplateDraft {
   return {
     id: t.id,
     name: t.name,
-    platform: t.platform,
-    categoryValue: t.categoryValue,
-    categoryLabel: t.category,
-    languages: t.languages,
+    platforms: t.platforms || [],
+    categoryValues: t.categoryValues || (t.categoryValue ? [t.categoryValue] : []),
+    languages: t.languages || ['ZH'],
     content: t.content,
     status: t.status,
   };
@@ -75,9 +76,14 @@ function templateToDraft(t: Template): TemplateDraft {
 export default function TemplatesPage() {
   const { user } = useAuth();
   const importInputRef = useRef<HTMLInputElement>(null);
-  const [templates, setTemplates] = useState<Template[]>(() =>
-    loadStoredReplyTemplates() as Template[]
-  );
+  const [templates, setTemplates] = useState<Template[]>(() => {
+    const stored = loadStoredReplyTemplates() as any[];
+    return stored.map(t => ({
+      ...t,
+      platforms: Array.isArray(t.platforms) ? t.platforms : (t.platform ? [t.platform] : ['All']),
+      categoryValues: Array.isArray(t.categoryValues) ? t.categoryValues : (t.categoryValue ? [t.categoryValue] : []),
+    })) as Template[];
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<TemplateDraft | null>(null);
@@ -132,40 +138,64 @@ export default function TemplatesPage() {
     void loadRoutingOptions();
   }, [loadRoutingOptions]);
 
-  const channelPickOptions = useMemo((): TemplatePickOption[] => {
+  const platformPickOptions = useMemo((): TemplatePickOption[] => {
     const opts: TemplatePickOption[] = [{ value: 'All', label: '所有平台' }];
-    for (const c of ruleOptions.channels) {
-      opts.push({ value: c.displayName, label: c.displayName });
+    // 仅使用接口同步的平台列表（去重后的 platformType）
+    if (ruleOptions.platforms.length > 0) {
+      // 过滤掉已经在 opts 里的（通常 platforms 里不含 All）
+      const apiPlatforms = ruleOptions.platforms.filter(p => p.value !== 'All');
+      return [...opts, ...apiPlatforms];
     }
+    // 如果没有任何同步平台，至少保留一个所有平台
     return opts;
-  }, [ruleOptions.channels]);
+  }, [ruleOptions.platforms]);
 
   const afterSalesTypePickOptions = useMemo((): TemplatePickOption[] => {
     return ruleOptions.afterSalesTypes.map((o) => ({ value: o.value, label: o.label }));
   }, [ruleOptions.afterSalesTypes]);
 
-  const modalChannelOptions = useMemo(
-    () => mergePickOption(channelPickOptions, editingTemplate?.platform, '（未在同步渠道中）'),
-    [channelPickOptions, editingTemplate?.platform]
-  );
+  const modalPlatformOptions = useMemo(() => {
+    let base = platformPickOptions;
+    if (editingTemplate && Array.isArray(editingTemplate.platforms)) {
+      for (const p of editingTemplate.platforms) {
+        base = mergePickOption(base, p, '（未在同步平台中）');
+      }
+    }
+    return base;
+  }, [platformPickOptions, editingTemplate]);
 
-  const modalAfterSalesOptions = useMemo(
-    () => mergePickOption(afterSalesTypePickOptions, editingTemplate?.categoryValue, '（未在类型列表中）'),
-    [afterSalesTypePickOptions, editingTemplate?.categoryValue]
-  );
+  const modalAfterSalesOptions = useMemo(() => {
+    let base = afterSalesTypePickOptions;
+    const currentValues = editingTemplate?.categoryValues || [];
+    for (const v of currentValues) {
+      base = mergePickOption(base, v, '（未在类型列表中）');
+    }
+    return base;
+  }, [afterSalesTypePickOptions, editingTemplate]);
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
   const filteredTemplates = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return templates.filter((t) => {
-      if (q && !t.name.toLowerCase().includes(q) && !t.content.toLowerCase().includes(q)) {
-        return false;
-      }
-      if (filters.platform && t.platform !== filters.platform) return false;
-      if (filters.category && t.categoryValue !== filters.category) return false;
-      return true;
-    });
+    try {
+      const q = searchQuery.trim().toLowerCase();
+      return (templates || []).filter((t) => {
+        if (!t) return false;
+        if (q && !String(t.name || '').toLowerCase().includes(q) && !String(t.content || '').toLowerCase().includes(q)) {
+          return false;
+        }
+        const tPlatforms = Array.isArray(t.platforms) ? t.platforms : [];
+        if (filters.platform && !tPlatforms.includes(filters.platform)) return false;
+        
+        if (filters.category) {
+          const tCategories = Array.isArray(t.categoryValues) ? t.categoryValues : [];
+          if (!tCategories.includes(filters.category)) return false;
+        }
+        return true;
+      });
+    } catch (e) {
+      console.error('Failed to filter templates:', e);
+      return [];
+    }
   }, [templates, searchQuery, filters]);
 
   const closeModal = () => {
@@ -184,20 +214,18 @@ export default function TemplatesPage() {
   };
 
   const handleSave = (values: TemplateFormValues, editingId?: string) => {
-    const categoryLabel = routingAfterSalesLabel(values.category);
     const updatedAt = todayStr();
     const languages = ['ZH'];
 
     if (editingId) {
       setTemplates((prev) => {
-        const next = prev.map((row) =>
+        const next = (prev || []).map((row) =>
           row.id === editingId
             ? {
                 ...row,
                 name: values.name,
-                platform: values.platform,
-                category: categoryLabel,
-                categoryValue: values.category,
+                platforms: values.platforms,
+                categoryValues: values.categoryValues,
                 content: values.content,
                 languages,
                 status: values.status,
@@ -213,13 +241,12 @@ export default function TemplatesPage() {
 
     setTemplates((prev) => {
       const next: Template[] = [
-        ...prev,
+        ...(prev || []),
         {
           id: newTemplateId(),
           name: values.name,
-          platform: values.platform,
-          category: categoryLabel,
-          categoryValue: values.category,
+          platforms: values.platforms,
+          categoryValues: values.categoryValues,
           content: values.content,
           languages,
           status: values.status,
@@ -278,15 +305,14 @@ export default function TemplatesPage() {
         const added: Template[] = importedRows.map((row) => ({
           id: newTemplateId(),
           name: row.name,
-          platform: row.platform,
-          categoryValue: row.categoryValue,
-          category: routingAfterSalesLabel(row.categoryValue),
+          platforms: row.platforms,
+          categoryValues: row.categoryValues,
           content: row.content,
           languages: ['ZH'],
           status: row.status,
           updatedAt: todayStr(),
         }));
-        const next = [...prev, ...added];
+        const next = [...(prev || []), ...added];
         persistStoredReplyTemplates(next as StoredReplyTemplate[]);
         return next;
       });
@@ -303,7 +329,7 @@ export default function TemplatesPage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">模板管理</h1>
-            <p className="text-sm text-slate-500 mt-1">管理快捷回复模板，可按渠道与类型筛选，支持 CSV 批量导入。</p>
+            <p className="text-sm text-slate-500 mt-1">管理快捷回复模板，可按平台与类型筛选，支持 CSV 批量导入。</p>
           </div>
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
@@ -382,13 +408,13 @@ export default function TemplatesPage() {
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-slate-500">平台</label>
                       <select
-                        aria-label="按渠道筛选模板"
+                        aria-label="按平台筛选模板"
                         value={filters.platform}
                         onChange={(e) => setFilters({ ...filters, platform: e.target.value })}
                         className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
                       >
                         <option value="">全部</option>
-                        {channelPickOptions.map((o) => (
+                        {platformPickOptions.map((o) => (
                           <option key={o.value} value={o.value}>
                             {o.label}
                           </option>
@@ -445,95 +471,95 @@ export default function TemplatesPage() {
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500">
               <tr>
                 <th className="px-6 py-4 font-medium">模板名称</th>
-                <th className="px-6 py-4 font-medium">适用渠道</th>
-                <th className="px-6 py-4 font-medium">
-                  <div className="flex items-center gap-1.5">
-                    售后类型
-                    <div className="group relative flex items-center justify-center">
-                      <div className="w-4 h-4 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-bold cursor-help">
-                        ?
-                      </div>
-                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10 shadow-xl">
-                        <div className="font-bold mb-1 text-indigo-300">AI 意图关联说明</div>
-                        <p className="text-slate-300 leading-relaxed">
-                          售后类型与 AI 意图识别关联。当识别到买家意图时，系统会推荐对应类型下的模板。
-                        </p>
-                        <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45" />
-                      </div>
-                    </div>
-                  </div>
-                </th>
+                <th className="px-6 py-4 font-medium">适用平台</th>
+                <th className="px-6 py-4 font-medium">售后类型</th>
                 <th className="px-6 py-4 font-medium">状态</th>
                 <th className="px-6 py-4 font-medium">更新时间</th>
                 <th className="px-6 py-4 font-medium text-right">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredTemplates.map((template) => (
-                <tr key={template.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="font-medium text-slate-900">{template.name}</div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="inline-flex items-center px-2 py-1 rounded-md bg-slate-100 text-slate-600 text-xs font-medium">
-                      {template.platform}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex flex-col gap-1">
-                      <span className="inline-flex items-center gap-1 text-slate-700 font-medium">
-                        <Tag className="w-3.5 h-3.5 text-slate-400" />
-                        {template.category}
+              {(filteredTemplates || []).map((template) => {
+                if (!template) return null;
+                return (
+                  <tr key={template.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="font-medium text-slate-900">{template.name}</div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-wrap gap-1">
+                        {Array.isArray(template.platforms) && template.platforms.map((p) => (
+                          <span
+                            key={p}
+                            className="inline-flex items-center px-2 py-1 rounded-md bg-slate-100 text-slate-600 text-xs font-medium"
+                          >
+                            {p === 'All' ? '所有平台' : p}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-wrap gap-1">
+                        {(Array.isArray(template.categoryValues) && template.categoryValues.length > 0
+                          ? template.categoryValues
+                          : template.categoryValue
+                          ? [template.categoryValue]
+                          : []
+                        ).map((cv) => (
+                          <span
+                            key={cv}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-indigo-50 text-indigo-600 text-xs font-medium border border-indigo-100"
+                          >
+                            <Tag className="w-3 h-3" />
+                            {routingAfterSalesLabel(cv)}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span
+                        className={cn(
+                          'inline-flex items-center px-2 py-1 rounded-full text-xs font-bold',
+                          template.status === 'active'
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-slate-100 text-slate-600'
+                        )}
+                      >
+                        {template.status === 'active' ? '已启用' : '草稿'}
                       </span>
-                      <span className="text-[10px] text-slate-400 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
-                        AI 意图关联
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span
-                      className={cn(
-                        'inline-flex items-center px-2 py-1 rounded-full text-xs font-bold',
-                        template.status === 'active'
-                          ? 'bg-green-100 text-green-700'
-                          : 'bg-slate-100 text-slate-600'
-                      )}
-                    >
-                      {template.status === 'active' ? '已启用' : '草稿'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-slate-500">{template.updatedAt}</td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-1 sm:gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(template)}
-                        className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                        title="编辑"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleCopy(template)}
-                        className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-                        title="复制"
-                      >
-                        <Copy className="w-4 h-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(template)}
-                        className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                        title="删除"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-6 py-4 text-slate-500">{template.updatedAt}</td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex items-center justify-end gap-1 sm:gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openEdit(template)}
+                          className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="编辑"
+                        >
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(template)}
+                          className="p-1.5 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
+                          title="复制"
+                        >
+                          <Copy className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(template)}
+                          className="p-1.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="删除"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           {filteredTemplates.length === 0 && (
@@ -546,7 +572,7 @@ export default function TemplatesPage() {
         isOpen={isAddModalOpen}
         onClose={closeModal}
         editingTemplate={editingTemplate}
-        channelPickOptions={modalChannelOptions}
+        platformOptions={modalPlatformOptions}
         afterSalesTypeOptions={modalAfterSalesOptions}
         onSave={handleSave}
       />

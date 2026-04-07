@@ -34,6 +34,9 @@ import {
   fetchDashboardInboxMetrics,
   fetchDashboardStructure,
   fetchDashboardTrends,
+  intellideskFetchErrorMessage,
+  setGlobalApiError,
+  formatAiUserVisibleError,
   type DashboardInboxMetrics,
   type StructureBucket,
 } from '@/src/services/intellideskApi';
@@ -42,7 +45,7 @@ import OnlineSeatsModal from './OnlineSeatsModal';
 import { DEMO_AGENT_SEATS_INITIAL, DEMO_SEAT_ONLINE_BY_ID } from '@/src/data/demoAgentSeats';
 
 /**
- * 与收件箱「消息处理 / SLA」口径对齐的仪表盘指标。
+ * 与工单「消息处理 / SLA」口径对齐的仪表盘指标。
  * 环比徽章：产品定义为「较昨日同时段」——今日当前时刻的快照值 vs 昨日同一时刻快照值。
  * 公式：变化率 = (今日值 − 昨日值) ÷ max(|昨日值|, ε) × 100%，四舍五入保留一位小数；昨日为 0 且今日 > 0 时展示「新增」类文案（由后端/前端约定）。
  * 当前数值与百分比为静态 Mock，接入统计接口后由服务端按上述口径返回 current、previous、changePercent。
@@ -162,7 +165,7 @@ const USAGE_NAV: { step: number; title: string; desc: string; path: string }[] =
     step: 1,
     title: '绑定店铺',
     desc: '接入各平台下的店铺，同步订单与买家消息',
-    path: '/settings',
+    path: 'https://tiaojia.nezhachuhai.com/authorization',
   },
   {
     step: 2,
@@ -194,20 +197,11 @@ const MOCK_CHART_DATA = [
   { name: '周日', tickets: 70, resolved: 75 },
 ];
 
-function DistributionPieCard({
-  title,
-  subtitle,
-  data,
-}: {
-  title: string;
-  subtitle?: string;
-  data: DistSlice[];
-}) {
+function DistributionPieCard({ title, data }: { title: string; data: DistSlice[] }) {
   return (
     <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 flex flex-col min-h-[320px]">
       <div className="mb-2">
         <h3 className="text-lg font-bold text-slate-900">{title}</h3>
-        {subtitle ? <p className="text-xs text-slate-500 mt-1">{subtitle}</p> : null}
       </div>
       <div className="flex-1 min-h-[220px] w-full flex flex-col">
         <div className="h-[220px] w-full shrink-0">
@@ -297,6 +291,12 @@ export default function DashboardPage() {
   const [dashLoading, setDashLoading] = useState(false);
   const [dashError, setDashError] = useState<string | null>(null);
 
+  useEffect(() => {
+    import('@/src/services/intellideskApi').then((m) => m.setGlobalApiError(dashError));
+  }, [dashError]);
+
+  const [dashRetryKey, setDashRetryKey] = useState(0);
+
   const onlineSeatPreview = useMemo(() => {
     const online = DEMO_AGENT_SEATS_INITIAL.filter(
       (s) => s.status === 'active' && DEMO_SEAT_ONLINE_BY_ID[s.id]
@@ -323,7 +323,7 @@ export default function DashboardPage() {
         setApiStructure(s);
         setTrendSeries(t.series);
       } catch (e) {
-        if (!cancelled) setDashError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) setDashError(intellideskFetchErrorMessage(e));
       } finally {
         if (!cancelled) setDashLoading(false);
       }
@@ -331,7 +331,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [liveDash, tenantId, apiUserId, trendRange]);
+  }, [liveDash, tenantId, apiUserId, trendRange, dashRetryKey]);
 
   const inboxStatCards = useMemo(() => {
     if (!liveDash || !apiMetrics) return INBOX_METRICS;
@@ -412,6 +412,7 @@ export default function DashboardPage() {
   useEffect(() => {
     const generateInsight = async () => {
       setIsGeneratingInsight(true);
+      setGlobalApiError(null);
       const statsLine =
         liveDash && apiMetrics
           ? `未读 ${apiMetrics.unread.current}、已读未回复 ${apiMetrics.unreplied.current}、已回复 ${apiMetrics.replied.current}、SLA超时 ${apiMetrics.slaOverdue.current}。`
@@ -424,9 +425,15 @@ export default function DashboardPage() {
             'Provide a 2-sentence summary of our current performance and one actionable recommendation in Chinese.',
         },
       ];
-      const summary = await summarizeTicket(mockConversation);
-      setAiInsight(summary);
-      setIsGeneratingInsight(false);
+      try {
+        const summary = await summarizeTicket(mockConversation);
+        setAiInsight(summary);
+      } catch (e) {
+        setGlobalApiError(`[工作台 AI 洞察] ${formatAiUserVisibleError(e)}`);
+        setAiInsight('暂时无法生成 AI 洞察，请稍后刷新页面重试。');
+      } finally {
+        setIsGeneratingInsight(false);
+      }
     };
 
     void generateInsight();
@@ -434,11 +441,6 @@ export default function DashboardPage() {
 
   return (
     <div className="p-8 space-y-8 bg-slate-50/50 min-h-full">
-      {dashError ? (
-        <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-800">
-          {dashError}
-        </div>
-      ) : null}
       {liveDash && dashLoading ? (
         <div className="flex items-center gap-2 text-sm text-slate-500">
           <Loader2 className="w-4 h-4 animate-spin" />
@@ -518,34 +520,48 @@ export default function DashboardPage() {
       <div>
         <h3 className="text-lg font-bold text-slate-900 mb-4">使用导航</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {USAGE_NAV.map((nav) => (
-            <Link
-              key={nav.step}
-              to={nav.path}
-              className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-start gap-4 hover:border-slate-300 hover:shadow-md transition-all group"
-            >
-              <div
-                className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-2xl font-bold tabular-nums text-slate-800 group-hover:border-[#F97316]/40 group-hover:bg-orange-50/60 group-hover:text-[#F97316] transition-colors"
-                aria-hidden
-              >
-                {nav.step}
-              </div>
-              <div className="flex-1 min-w-0 pt-0.5">
-                <h4 className="font-bold text-slate-900 group-hover:text-[#F97316] transition-colors">
-                  {nav.title}
-                </h4>
-                <p className="text-sm text-slate-500 mt-1 leading-snug">{nav.desc}</p>
-              </div>
-              <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 shrink-0 mt-1" />
-            </Link>
-          ))}
+          {USAGE_NAV.map((nav) => {
+            const isExternal = nav.path.startsWith('http');
+            const innerContent = (
+              <>
+                <div
+                  className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-2xl font-bold tabular-nums text-slate-800 group-hover:border-[#F97316]/40 group-hover:bg-orange-50/60 group-hover:text-[#F97316] transition-colors"
+                  aria-hidden
+                >
+                  {nav.step}
+                </div>
+                <div className="flex-1 min-w-0 pt-0.5">
+                  <h4 className="font-bold text-slate-900 group-hover:text-[#F97316] transition-colors">
+                    {nav.title}
+                  </h4>
+                  <p className="text-sm text-slate-500 mt-1 leading-snug">{nav.desc}</p>
+                </div>
+                <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 shrink-0 mt-1" />
+              </>
+            );
+
+            const className = "bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-start gap-4 hover:border-slate-300 hover:shadow-md transition-all group";
+
+            if (isExternal) {
+              return (
+                <a key={nav.step} href={nav.path} className={className} target="_blank" rel="noopener noreferrer">
+                  {innerContent}
+                </a>
+              );
+            }
+            return (
+              <Link key={nav.step} to={nav.path} className={className}>
+                {innerContent}
+              </Link>
+            );
+          })}
         </div>
       </div>
 
-      {/* 收件箱指标：与消息处理状态 / SLA 口径一致 */}
+      {/* 工单指标：与消息处理状态 / SLA 口径一致 */}
       <div>
         <div className="flex items-center gap-2 mb-4">
-          <h3 className="text-lg font-bold text-slate-900">收件箱</h3>
+          <h3 className="text-lg font-bold text-slate-900">工单</h3>
           <div className="group relative flex items-center">
             <HelpCircle className="w-4 h-4 text-slate-400 hover:text-slate-600 cursor-help transition-colors" />
             <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-72 p-3 bg-slate-800 text-slate-200 text-xs rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none z-10">
@@ -599,26 +615,14 @@ export default function DashboardPage() {
       <div>
         <h3 className="text-lg font-bold text-slate-900 mb-4">业务结构分布</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          <DistributionPieCard
-            title="工单意图分布"
-            subtitle="按工单 intent 字段聚合（未填写计入「未分类」）"
-            data={intentPie}
-          />
-          <DistributionPieCard
-            title="用户情绪分布"
-            subtitle="买家消息情绪识别（与收件箱情绪标签一致）"
-            data={sentimentPie}
-          />
-          <DistributionPieCard
-            title="订单状态分布"
-            subtitle="关联订单状态以中文展示（含无关联订单等）"
-            data={orderStatusPie}
-          />
+          <DistributionPieCard title="工单意图分布" data={intentPie} />
+          <DistributionPieCard title="用户情绪分布" data={sentimentPie} />
+          <DistributionPieCard title="订单状态分布" data={orderStatusPie} />
         </div>
       </div>
 
-      {/* Main Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      {/* Main Charts Section：右侧「平台分布」高度与左侧趋势卡（图表区 300px + 内边距/标题）对齐，列表超出时滚动 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:items-start">
         <div className="lg:col-span-2 bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="text-lg font-bold text-slate-900">工单处理趋势</h3>
@@ -671,9 +675,9 @@ export default function DashboardPage() {
           </div>
         </div>
         
-        <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 space-y-6">
-          <h3 className="text-lg font-bold text-slate-900">平台分布</h3>
-          <div className="space-y-5">
+        <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 flex flex-col min-h-0 lg:h-[412px]">
+          <h3 className="text-lg font-bold text-slate-900 shrink-0">平台分布</h3>
+          <div className="mt-6 flex-1 min-h-0 overflow-y-auto pr-1 space-y-5 scrollbar-thin scrollbar-thumb-slate-200 hover:scrollbar-thumb-slate-300">
             {channelBars.length === 0 ? (
               <p className="text-sm text-slate-500 py-4 text-center">
                 {liveDash ? '暂无工单平台数据' : '演示数据'}

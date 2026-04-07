@@ -22,6 +22,7 @@ import {
   loadStoredCitationFeedback,
   removeStoredCitationFeedback,
 } from '@/src/lib/citationFeedbackStore';
+import { previewKnowledgeBaseTrialAnswer } from '@/src/services/geminiService';
 
 const DISMISSED_DEMO_FEEDBACK_KEY = 'edesk_citation_feedback_dismissed_demo_v1';
 
@@ -203,8 +204,10 @@ export default function KnowledgeBasePage() {
 
   const [docSearch, setDocSearch] = useState('');
   const [trialQuery, setTrialQuery] = useState('');
-  const [trialResults, setTrialResults] = useState<KbChunk[] | null>(null);
   const [trialLoading, setTrialLoading] = useState(false);
+  const [trialAiPreview, setTrialAiPreview] = useState<string | null>(null);
+  const [trialChunkHits, setTrialChunkHits] = useState<KbChunk[]>([]);
+  const [trialFaqHits, setTrialFaqHits] = useState<KbFaq[]>([]);
 
   const [addDocOpen, setAddDocOpen] = useState(false);
   const [addFaqOpen, setAddFaqOpen] = useState(false);
@@ -224,27 +227,45 @@ export default function KnowledgeBasePage() {
     return documents.filter((d) => !q || d.name.toLowerCase().includes(q));
   }, [documents, docSearch]);
 
-  const runTrialSearch = () => {
-    const q = trialQuery.trim().toLowerCase();
+  const runTrialSearch = async () => {
+    const q = trialQuery.trim();
     if (!q) {
-      setTrialResults(null);
+      setTrialAiPreview(null);
+      setTrialChunkHits([]);
+      setTrialFaqHits([]);
       return;
     }
     setTrialLoading(true);
-    window.setTimeout(() => {
-      const hits = SEARCH_INDEX.filter(
-        (c) =>
-          c.excerpt.toLowerCase().includes(q) || c.docName.toLowerCase().includes(q)
-      );
-      setTrialResults(hits.length ? hits : []);
-      setTrialLoading(false);
-    }, 400);
+    setTrialAiPreview(null);
+    const qLower = q.toLowerCase();
+    const hits = SEARCH_INDEX.filter(
+      (c) =>
+        c.excerpt.toLowerCase().includes(qLower) || c.docName.toLowerCase().includes(qLower)
+    );
+    const matchedFaqs = faqs.filter(
+      (f) =>
+        f.status === 'published' &&
+        (f.question.toLowerCase().includes(qLower) || f.answer.toLowerCase().includes(qLower))
+    );
+    const snippets = [
+      ...hits.map((c) => ({ title: c.docName, body: c.excerpt })),
+      ...matchedFaqs.map((f) => ({ title: `问答：${f.question}`, body: f.answer })),
+    ];
+    try {
+      const answer = await previewKnowledgeBaseTrialAnswer(q, snippets);
+      setTrialAiPreview(answer);
+    } catch (e) {
+      setTrialAiPreview(`生成失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+    setTrialChunkHits(hits);
+    setTrialFaqHits(matchedFaqs);
+    setTrialLoading(false);
   };
 
   const saveDocumentDraft = () => {
     const name = docForm.name.trim() || docForm.fileName || '未命名文档';
     if (!docForm.paste.trim() && !docForm.fileName) {
-      window.alert('请粘贴正文或选择文件（演示环境可只填标题+粘贴一段文字）');
+      window.alert('请粘贴正文，或先选择要上传的文件');
       return;
     }
     setDocuments((prev) => [
@@ -371,7 +392,7 @@ export default function KnowledgeBasePage() {
               知识库
             </h1>
             <p className="text-sm text-slate-500 mt-1 max-w-xl">
-              上传或粘贴政策与说明，自动切片索引；AI 回复可展示引用来源。先发布再参与检索。
+              维护文档与问答，发布后供 AI 检索与引用。
             </p>
           </div>
         </div>
@@ -398,10 +419,14 @@ export default function KnowledgeBasePage() {
             <div className="bg-gradient-to-br from-orange-50 to-white border border-orange-100 rounded-2xl p-6 shadow-sm">
               <div className="flex items-center gap-2 text-slate-900 font-bold text-sm mb-3">
                 <Sparkles className="w-4 h-4 text-[#F97316]" />
-                试答检索
+                AI 回答试测
               </div>
               <p className="text-xs text-slate-600 mb-4">
-                输入买家可能问法，预览会命中哪些知识片段（不调用大模型，仅检索演示）。
+                输入买家可能提出的问题，生成{' '}
+                <span className="font-semibold text-slate-700">AI 回复预览</span>
+                ，用于判断回答是否贴切、知识是否覆盖到位。下方会列出与本次问题相关的知识片段与
+                <span className="font-semibold text-slate-700">已发布</span>
+                问答对。
               </p>
               <div className="flex flex-col sm:flex-row gap-3">
                 <div className="relative flex-1">
@@ -409,46 +434,71 @@ export default function KnowledgeBasePage() {
                   <input
                     value={trialQuery}
                     onChange={(e) => setTrialQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && runTrialSearch()}
+                    onKeyDown={(e) => e.key === 'Enter' && void runTrialSearch()}
                     placeholder="例如：商品破损怎么退款"
                     className="w-full pl-10 pr-3 py-2.5 bg-white border border-orange-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
                   />
                 </div>
                 <button
                   type="button"
-                  onClick={runTrialSearch}
+                  onClick={() => void runTrialSearch()}
                   className="px-5 py-2.5 bg-[#F97316] hover:bg-[#ea580c] text-white rounded-xl text-sm font-bold shrink-0 transition-colors"
                 >
-                  试检索
+                  生成预览
                 </button>
               </div>
               {trialLoading && (
                 <div className="flex items-center gap-2 mt-4 text-sm text-slate-700">
                   <Loader2 className="w-4 h-4 animate-spin text-[#F97316]" />
-                  检索中…
+                  正在检索知识依据并生成预览…
                 </div>
               )}
-              {trialResults && !trialLoading && (
-                <ul className="mt-4 space-y-3">
-                  {trialResults.length === 0 ? (
-                    <li className="text-sm text-slate-600">暂无匹配片段，可尝试换关键词或补充文档。</li>
+              {!trialLoading && trialAiPreview !== null && (
+                <div className="mt-4 space-y-4">
+                  <div className="bg-white/95 border border-orange-100 rounded-xl p-4 shadow-sm">
+                    <div className="text-[11px] font-bold uppercase tracking-wide text-[#F97316] mb-2">
+                      AI 回复预览
+                    </div>
+                    <p className="text-sm text-slate-800 leading-relaxed whitespace-pre-wrap">
+                      {trialAiPreview}
+                    </p>
+                  </div>
+                  {trialChunkHits.length > 0 || trialFaqHits.length > 0 ? (
+                    <>
+                      <p className="text-xs font-semibold text-slate-600">命中的知识依据</p>
+                      <ul className="space-y-3">
+                        {trialChunkHits.map((c) => (
+                          <li
+                            key={c.id}
+                            className="bg-white/90 border border-orange-100 rounded-xl p-4 text-sm"
+                          >
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span className="font-semibold text-slate-900">{c.docName}</span>
+                              <span className="text-[11px] font-mono text-[#F97316]">
+                                相关度 {(c.score * 100).toFixed(0)}%
+                              </span>
+                            </div>
+                            <p className="text-slate-600 leading-relaxed">{c.excerpt}</p>
+                          </li>
+                        ))}
+                        {trialFaqHits.map((f) => (
+                          <li
+                            key={f.id}
+                            className="bg-white/90 border border-violet-100 rounded-xl p-4 text-sm"
+                          >
+                            <div className="text-[11px] font-bold text-violet-700 mb-1">已发布问答</div>
+                            <p className="font-semibold text-slate-900">Q：{f.question}</p>
+                            <p className="text-slate-600 leading-relaxed mt-1">A：{f.answer}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
                   ) : (
-                    trialResults.map((c) => (
-                      <li
-                        key={c.id}
-                        className="bg-white/90 border border-orange-100 rounded-xl p-4 text-sm"
-                      >
-                        <div className="flex items-center justify-between gap-2 mb-1">
-                          <span className="font-semibold text-slate-900">{c.docName}</span>
-                          <span className="text-[11px] font-mono text-[#F97316]">
-                            相关度 {(c.score * 100).toFixed(0)}%
-                          </span>
-                        </div>
-                        <p className="text-slate-600 leading-relaxed">{c.excerpt}</p>
-                      </li>
-                    ))
+                    <p className="text-sm text-slate-600">
+                      当前没有匹配到知识片段或已发布问答；上方预览主要体现系统在缺少直接依据时的回复方式，便于您评估兜底话术是否合适。
+                    </p>
                   )}
-                </ul>
+                </div>
               )}
             </div>
 
@@ -596,7 +646,7 @@ export default function KnowledgeBasePage() {
         {tab === 'feedback' && (
           <div className="space-y-4">
             <p className="text-sm text-slate-500">
-              来自会话中「查看引用来源」的反馈：客服在引用弹窗内点击「有用 / 内容需更新 / 待跟进」会写入本地并出现在此列表；内置三条为演示样例。上线后可改为埋点上报并由服务端回写。
+              汇总工单里「查看引用来源」中的评价：客服可标记引用是否「有用」「内容需更新」或「待跟进」。便于您跟进知识是否过时、是否需要补充或修订。处理完毕后点击「标记已处理」即可从待办中收起。
             </p>
             {feedback.map((fb) => (
               <div
@@ -705,7 +755,7 @@ export default function KnowledgeBasePage() {
                   <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:border-[#F97316]/50 hover:bg-orange-50/50 transition-colors">
                     <Upload className="w-8 h-8 text-slate-400 mb-2" />
                     <span className="text-sm text-slate-600">点击选择 PDF / Word / TXT</span>
-                    <span className="text-xs text-slate-400 mt-1">演示环境仅记录文件名</span>
+                    <span className="text-xs text-slate-400 mt-1">支持 PDF、Word、TXT、Markdown</span>
                     <input
                       type="file"
                       accept=".pdf,.doc,.docx,.txt,.md"
@@ -748,7 +798,7 @@ export default function KnowledgeBasePage() {
               </div>
               <p className="text-xs text-slate-500 flex items-start gap-2">
                 <Globe className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                保存后自动切片与建索引（演示为短时「处理中」再变草稿）；仅「已发布」文档参与 AI 引用检索。
+                保存后将进入解析与索引，列表中会显示处理进度；完成后可发布。仅「已发布」的文档会参与 AI 回复中的引用检索。
               </p>
               <div className="flex justify-end gap-2 pt-2">
                 <button

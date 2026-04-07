@@ -27,6 +27,25 @@ async function main() {
     update: { name: tenantName },
   });
 
+  await prisma.tenantSyncSettings.upsert({
+    where: { tenantId: SEED.tenantId },
+    create: {
+      tenantId: SEED.tenantId,
+      syncEnabled: true,
+      messagePollIntervalSec: 300,
+      orderPollIntervalSec: 900,
+      incrementalSyncDays: 90,
+      useSyncWatermark: true,
+      messageSyncDisabledPlatformTypes: [],
+      defaultNewShopOrderBackfillMode: 'recent_days',
+      defaultNewShopOrderBackfillRecentDays: 90,
+      defaultNewShopTicketBackfillMode: 'recent_days',
+      defaultNewShopTicketBackfillRecentDays: 90,
+      skipMockTickets: true,
+    },
+    update: {},
+  });
+
   await prisma.user.upsert({
     where: { tenantId_email: { tenantId: SEED.tenantId, email: 'admin@demo.local' } },
     create: {
@@ -156,9 +175,12 @@ async function main() {
       enabled: false,
       intentMatch: '物流查询',
       keywords: ['物流', 'tracking'],
+      replyContent: '您好，我们正在为您查询物流信息，请稍候。',
       markRepliedOnSend: true,
     },
-    update: {},
+    update: {
+      replyContent: '您好，我们正在为您查询物流信息，请稍候。',
+    },
   });
 
   await prisma.ticketRoutingRule.upsert({
@@ -166,13 +188,25 @@ async function main() {
     create: {
       id: 'dddddddd-dddd-4ddd-8ddd-000000000001',
       tenantId: SEED.tenantId,
-      name: '高优先级 → 默认坐席',
+      name: 'Amazon US 店铺 → 默认坐席',
       priority: 10,
-      conditions: { minPriority: 1 },
+      conditions: {
+        platformTypes: ['AMAZON'],
+        channelIds: [SEED.channelAmazonUs],
+        afterSalesTypes: [],
+      },
       targetSeatId: SEED.seat1,
       enabled: true,
     },
-    update: { targetSeatId: SEED.seat1 },
+    update: {
+      name: 'Amazon US 店铺 → 默认坐席',
+      targetSeatId: SEED.seat1,
+      conditions: {
+        platformTypes: ['AMAZON'],
+        channelIds: [SEED.channelAmazonUs],
+        afterSalesTypes: [],
+      },
+    },
   });
 
   console.log('[seed-production] OK — 骨架已就绪（无工单/订单）。');

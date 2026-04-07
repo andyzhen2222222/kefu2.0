@@ -1,4 +1,6 @@
 {
+  "include": ["src/**/*", "vite.config.ts", "vite-env.d.ts"],
+  "exclude": ["node_modules", "dist", "backend"],
   "compilerOptions": {
     "target": "ES2022",
     "experimentalDecorators": true,

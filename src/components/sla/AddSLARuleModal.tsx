@@ -14,14 +14,39 @@ interface AddSLARuleModalProps {
   onClose: () => void;
   onSubmit?: (payload: NewSlaRulePayload) => Promise<void>;
   submitting?: boolean;
+  initialData?: {
+    name: string;
+    channelPattern: string | null;
+    warningHours: number;
+    timeoutHours: number;
+    conditions?: any;
+  } | null;
+  platforms?: { value: string; label: string }[];
 }
 
 function platformToChannelPattern(platform: string): string | null {
   if (!platform || platform === 'all') return null;
+  // If it's a known static lower-case fallback, we preserve the original casing style if needed, 
+  // but `%platform%` is generally fine as it matches via ILIKE or our local includes.
   if (platform === 'amazon') return '%Amazon%';
   if (platform === 'ebay') return '%eBay%';
   if (platform === 'shopify') return '%Shopify%';
   return `%${platform}%`;
+}
+
+function channelPatternToPlatform(pattern: string | null, platforms: { value: string; label: string }[] = []): string {
+  if (!pattern) return 'all';
+  const clean = pattern.replace(/%/g, '');
+  const lowerClean = clean.toLowerCase();
+  
+  const matched = platforms.find((p) => p.value.toLowerCase() === lowerClean);
+  if (matched) return matched.value;
+
+  if (lowerClean === 'amazon') return 'amazon';
+  if (lowerClean === 'ebay') return 'ebay';
+  if (lowerClean === 'shopify') return 'shopify';
+
+  return clean;
 }
 
 export default function AddSLARuleModal({
@@ -29,6 +54,8 @@ export default function AddSLARuleModal({
   onClose,
   onSubmit,
   submitting = false,
+  initialData = null,
+  platforms = [],
 }: AddSLARuleModalProps) {
   const [name, setName] = useState('');
   const [platform, setPlatform] = useState('all');
@@ -38,13 +65,24 @@ export default function AddSLARuleModal({
 
   useEffect(() => {
     if (isOpen) {
-      setName('');
-      setPlatform('all');
-      setTimeoutHours(24);
-      setWarningHours(2);
-      setWorkNatural(true);
+      if (initialData) {
+        setName(initialData.name);
+        setPlatform(channelPatternToPlatform(initialData.channelPattern, platforms));
+        setTimeoutHours(initialData.timeoutHours);
+        setWarningHours(initialData.warningHours);
+        setWorkNatural(
+          !initialData.conditions ||
+          (initialData.conditions as Record<string, any>).calendar !== 'weekdays'
+        );
+      } else {
+        setName('');
+        setPlatform('all');
+        setTimeoutHours(24);
+        setWarningHours(2);
+        setWorkNatural(true);
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, initialData, platforms]);
 
   if (!isOpen) return null;
 
@@ -67,7 +105,7 @@ export default function AddSLARuleModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <h2 className="text-lg font-bold text-slate-900">新增 SLA 规则</h2>
+          <h2 className="text-lg font-bold text-slate-900">{initialData ? '编辑 SLA 规则' : '新增 SLA 规则'}</h2>
           <button
             type="button"
             onClick={onClose}
@@ -92,14 +130,25 @@ export default function AddSLARuleModal({
           <div className="space-y-2">
             <label className="text-sm font-bold text-slate-700">适用平台</label>
             <select
+              title="适用平台"
               className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
               value={platform}
               onChange={(e) => setPlatform(e.target.value)}
             >
               <option value="all">所有平台</option>
-              <option value="amazon">Amazon</option>
-              <option value="ebay">eBay</option>
-              <option value="shopify">Shopify</option>
+              {platforms && platforms.length > 0 ? (
+                platforms.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))
+              ) : (
+                <>
+                  <option value="amazon">Amazon</option>
+                  <option value="ebay">eBay</option>
+                  <option value="shopify">Shopify</option>
+                </>
+              )}
             </select>
           </div>
 

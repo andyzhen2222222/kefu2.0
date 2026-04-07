@@ -5,13 +5,76 @@ Node + Express + Prisma(PostgreSQL) + WebSocket，对齐仓库根目录 `PRD_Bac
 ## 本地运行
 
 1. 启动 PostgreSQL（默认连接见 `.env.example`）。可用本目录 `docker compose up -d`（需本机 Docker）；若 Docker 不可用，请自备 PostgreSQL 实例并调整 `DATABASE_URL`。
-2. 复制环境变量：`cp .env.example .env`，按需填写 `DATABASE_URL`、`GEMINI_API_KEY`、`NEZHA_API_TOKEN`。
+2. 复制环境变量：`cp .env.example .env`，按需填写 `DATABASE_URL`、`ARK_API_KEY`（或 `DOUBAO_API_KEY`）与 `DOUBAO_ENDPOINT_ID`、`NEZHA_API_TOKEN` 等；未配豆包时可仅用 `GEMINI_API_KEY` 回退。
 3. 安装依赖：`npm install`
 4. 迁移：`npx prisma migrate deploy`
 5. 种子数据（二选一）：
    - **全量演示**（工单/订单/售后等）：`npm run db:seed` 或 `npm run db:deploy`
    - **生产骨架**（仅租户、用户、渠道、坐席、规则，无业务单）：`npm run db:seed:production` 或 `npm run db:deploy:production`
-6. 开发：`npm run dev` → API `http://localhost:4001`，WS `ws://localhost:4001/ws?tenantId=<种子租户UUID>`（默认 `PORT=4001`，避免与前端联调端口 4000 冲突）
+6. 开发：`npm run dev` → API `http://localhost:4000`，WS `ws://localhost:4000/ws?tenantId=<种子租户UUID>`（默认 `PORT=4000`，与根目录 Vite 联调端口 4001 错开）
+
+## 豆包 / 火山方舟 AI 配置
+
+工单内 **AI 草稿、润色、摘要、售后识别、翻译** 等由 `src/lib/llmClient.ts` 统一调用方舟；**仅服务端读环境变量**，不要把 API Key 写进前端构建参数（联调时前端走 `/api/ai/*`）。
+
+### 环境变量（见本目录 `.env.example`）
+
+| 变量 | 说明 |
+|------|------|
+| `ARK_API_KEY` 或 `DOUBAO_API_KEY` | 方舟 API Key，与官方 curl 里 `Authorization: Bearer` 一致 |
+| `DOUBAO_ENDPOINT_ID`（或 `ARK_ENDPOINT_ID`） | **推理接入点**填 `ep-…`；或填 **模型名**（如 `doubao-seed-1-8-251228`）走 Responses API |
+| `DOUBAO_MODEL_ID` | 可选，非空时覆盖上面的模型/接入点字段 |
+| `DOUBAO_BASE_URL` | 可选，默认 `https://ark.cn-beijing.volces.com/api/v3` |
+| `DOUBAO_API_MODE` | 可选：`chat` 强制 Chat Completions，`responses` 强制 Responses API；**不设**时：`ep-` 前缀走 Chat，否则走 Responses |
+| `GEMINI_API_KEY` | 未配置豆包时回退 Gemini；可选 `GEMINI_MODEL`（默认 `gemini-2.0-flash`） |
+
+### 路由与官方 curl 对应关系
+
+- **接入点 `ep-…`** → 内部请求 **`POST /api/v3/chat/completions`**（OpenAI 兼容），与下列 curl 一致：
+
+```bash
+curl https://ark.cn-beijing.volces.com/api/v3/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ARK_API_KEY" \
+  -d '{
+    "model": "ep-你的接入点ID",
+    "messages": [
+      {"role": "system", "content": "你是人工智能助手."},
+      {"role": "user", "content": "你好"}
+    ]
+  }'
+```
+
+本地 `.env` 中令 `DOUBAO_ENDPOINT_ID=ep-你的接入点ID` 即可；本服务会把业务提示词作为 user 消息发送（与多条 `messages` 等价用途）。
+
+- **模型名 `doubao-seed-…`** → 内部请求 **`POST /api/v3/responses`**；多模态示例（图+文）与官方一致：
+
+```bash
+curl https://ark.cn-beijing.volces.com/api/v3/responses \
+  -H "Authorization: Bearer $ARK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "doubao-seed-1-8-251228",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          {"type": "input_image", "image_url": "https://example.com/demo.png"},
+          {"type": "input_text", "text": "你看见了什么？"}
+        ]
+      }
+    ]
+  }'
+```
+
+纯文本场景也可使用 `"input": "你好"`（字符串形式），由 `llmClient` 在走 Responses 分支时自动采用。
+
+### 自建 API 路由
+
+- `POST /api/ai/suggest-reply`、`/summarize`、`/classify-intent`（工单意图，供详情顶栏刷新）、`/polish`、`/recognize-after-sales`、`/summarize-messages`、`/translate`  
+- 自检：`GET /api/ai/audit` 返回近期调用与当前解析到的提供商类型（`doubao` / `gemini` / `none`）
+
+配置保存后需**重启** `npm run dev`。
 
 ## 鉴权（演示）
 
@@ -45,7 +108,7 @@ X-Tenant-Id: 11111111-1111-4111-8111-111111111111
 
 ## 与前端联调
 
-在 IntelliDesk Web 中配置同源反向代理，将 `/api` 指到本服务。本地联调推荐：根目录 `npm run dev:api`（Vite `:4000` 已代理 `/api`、`/ws` 至后端 `:4001`），环境变量 `VITE_API_BASE_URL=http://localhost:4000`。
+在 IntelliDesk Web 中配置同源反向代理，将 `/api` 指到本服务。本地联调推荐：根目录 `npm run dev:api`（Vite `:4001` 已代理 `/api`、`/ws` 至后端 `:4000`），环境变量 `VITE_API_BASE_URL=http://localhost:4001`。
 
 ## 目录
 

@@ -6,8 +6,8 @@ import { ROUTING_AFTER_SALES_TYPE_OPTIONS } from './routingRuleOptions';
 
 export type ImportedReplyTemplateRow = {
   name: string;
-  platform: string;
-  categoryValue: string;
+  platforms: string[];
+  categoryValues: string[]; // 改为数组
   content: string;
   status: 'active' | 'draft';
 };
@@ -19,12 +19,13 @@ export type ParseReplyTemplatesImportResult =
 const REQUIRED_COLUMNS = ['模板名称', '售后类型', '模板内容'] as const;
 
 function normalizeHeaderCell(s: string): string {
-  return s.replace(/^\uFEFF/, '').trim().toLowerCase();
+  // 移除 BOM 并去除首尾空格
+  return s.replace(/^\uFEFF/, '').trim();
 }
 
 function normalizeStatus(v: string): 'active' | 'draft' {
   const x = v.trim().toLowerCase();
-  if (x === 'active' || x === '已启用') return 'active';
+  if (x === 'active' || x === '已启用' || x === 'active') return 'active';
   return 'draft';
 }
 
@@ -108,29 +109,33 @@ function parseDataRow(
   col: Record<string, number>,
   rowIndex: number
 ): ImportedReplyTemplateRow | string {
-  const nameCol = col['模板名称'] ?? col['name'];
+  const nameCol = col['模板名称'];
   const name = nameCol !== undefined ? String(cells[nameCol] ?? '').trim() : '';
   
-  const contentCol = col['模板内容'] ?? col['content'];
+  const contentCol = col['模板内容'];
   const content = contentCol !== undefined ? String(cells[contentCol] ?? '').trim() : '';
   
-  const categoryCol = col['售后类型'] ?? col['categoryValue'];
+  const categoryCol = col['售后类型'];
   const categoryRaw = categoryCol !== undefined ? String(cells[categoryCol] ?? '').trim() : '';
-  const categoryValue = categoryRaw ? resolveCategoryValue(categoryRaw) : '';
+  const categoryValues = categoryRaw 
+    ? categoryRaw.split(/[,，]/).map(v => resolveCategoryValue(v.trim())).filter(Boolean)
+    : [];
 
-  if (!name) return `第 ${rowIndex + 1} 行：模板名称不能为空`;
-  if (!categoryValue) return `第 ${rowIndex + 1} 行：售后类型不能为空`;
-  if (!content) return `第 ${rowIndex + 1} 行：模板内容不能为空`;
+  if (!name) return `第 ${rowIndex + 1} 行：「模板名称」不能为空`;
+  if (categoryValues.length === 0) return `第 ${rowIndex + 1} 行：「售后类型」不能为空`;
+  if (!content) return `第 ${rowIndex + 1} 行：「模板内容」不能为空`;
 
-  const platformCol = col['适用渠道'] ?? col['platform'];
-  const platform =
+  const platformCol = col['适用平台'];
+  const platformRaw =
     platformCol !== undefined ? String(cells[platformCol] ?? '').trim() || 'All' : 'All';
+  // 导入时将 CSV 中的逗号分隔或单一字符串转为数组
+  const platforms = platformRaw.split(/[,，]/).map(p => p.trim()).filter(Boolean);
 
-  const statusCol = col['状态'] ?? col['status'];
+  const statusCol = col['状态'];
   const statusRaw = statusCol !== undefined ? String(cells[statusCol] ?? '') : '';
   const status = statusRaw.trim() ? normalizeStatus(statusRaw) : 'draft';
 
-  return { name, platform, categoryValue, content, status };
+  return { name, platforms, categoryValues, content, status };
 }
 
 export function parseReplyTemplatesImportCsv(text: string): ParseReplyTemplatesImportResult {
@@ -172,17 +177,17 @@ function escapeCsvCell(raw: string): string {
 }
 
 export function buildReplyTemplatesImportTemplateCsv(): string {
-  const header = '模板名称,适用渠道,售后类型,状态,模板内容';
+  const header = '模板名称,适用平台,售后类型,状态,模板内容';
   const sampleName = '示例：物流进度说明';
-  const samplePlatform = 'All';
-  const sampleCat = '物流问题';
+  const samplePlatforms = 'Amazon, eBay'; // 示例多选
+  const sampleCats = '物流问题, 售后退款'; // 示例多选
   const sampleStatus = '草稿';
   const sampleContent =
     '{买家姓名} 您好，订单 {订单号} 物流 {物流单号} 已在途中。{店铺名称} 客服';
   const line = [
     escapeCsvCell(sampleName),
-    escapeCsvCell(samplePlatform),
-    escapeCsvCell(sampleCat),
+    escapeCsvCell(samplePlatforms),
+    escapeCsvCell(sampleCats),
     escapeCsvCell(sampleStatus),
     escapeCsvCell(sampleContent),
   ].join(',');

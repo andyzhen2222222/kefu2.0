@@ -14,6 +14,7 @@ import {
   MessageCircle,
   CheckCircle2,
   ChevronDown,
+  RefreshCw,
 } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import type { MessageProcessingStatus, Order, Ticket } from '@/src/types';
@@ -231,7 +232,7 @@ export function buildInboxStatusIcons(ticket: Ticket, order?: Order | null): Inb
   ];
 }
 
-/** 收件箱卡片：五枚状态图标，悬停见完整说明 */
+/** 工单卡片：五枚状态图标，悬停见完整说明 */
 export function InboxTicketStatusIcons({
   ticket,
   order,
@@ -331,7 +332,7 @@ const MESSAGE_PROCESSING_SELECT: { value: MessageProcessingStatus; label: string
 
 /** 与 TicketDetail「分配给坐席」下拉同一套视觉：白底、灰边框、slate 文字 */
 export const detailHeaderSelectClassName =
-  'w-full text-xs font-semibold border border-slate-200 rounded-lg pl-2 pr-8 py-1.5 bg-white text-slate-800 outline-none hover:border-slate-300 focus:ring-2 focus:ring-[#F97316]/25 focus:border-[#F97316] truncate cursor-pointer appearance-none';
+  'w-full text-xs font-semibold border border-slate-200 rounded-lg pl-2 pr-5 py-1.5 bg-white text-slate-800 outline-none hover:border-slate-300 focus:ring-2 focus:ring-[#F97316]/25 focus:border-[#F97316] truncate cursor-pointer appearance-none';
 
 /** 工单详情顶栏：会话处理状态下拉（样式与分配给坐席一致） */
 export function TicketConversationStatusSelect({
@@ -361,7 +362,7 @@ export function TicketConversationStatusSelect({
           </option>
         ))}
       </select>
-      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+      <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
     </div>
   );
 }
@@ -372,6 +373,13 @@ export function TicketDetailStatusChips({
   order,
   onMessageProcessingStatusChange,
   renderConversationAside = false,
+  intentRefreshable = false,
+  intentRefreshLoading = false,
+  onIntentRefresh,
+  sentimentRefreshable = false,
+  sentimentRefreshLoading = false,
+  onSentimentRefresh,
+  renderTicketSummaryButton,
 }: {
   ticket: Ticket;
   order?: Order | null;
@@ -379,70 +387,119 @@ export function TicketDetailStatusChips({
   onMessageProcessingStatusChange?: (status: MessageProcessingStatus) => void;
   /** 为 true 且同时传入 onMessageProcessingStatusChange 时，不在本行渲染「会话」控件（由顶栏右侧承载） */
   renderConversationAside?: boolean;
+  /** 是否允许刷新意图分类 */
+  intentRefreshable?: boolean;
+  intentRefreshLoading?: boolean;
+  onIntentRefresh?: () => void | Promise<void>;
+  /** 是否允许刷新情绪识别 */
+  sentimentRefreshable?: boolean;
+  sentimentRefreshLoading?: boolean;
+  onSentimentRefresh?: () => void | Promise<void>;
+  /** 是否展示工单摘要按钮（如果外部传入了） */
+  renderTicketSummaryButton?: ReactNode;
 }) {
   const ord = orderPresentation(order);
   const sent = sentimentPresentation(ticket.sentiment);
   const conv = messageProcessingPresentation(ticket.messageProcessingStatus);
   const slaText = formatSlaChipText(ticket);
 
-  const chips: { key: string; content: ReactNode; chip: string }[] = [
+  const chips: { key: string; content: ReactNode; chip: string; title: string }[] = [
     {
       key: 'sla',
+      title: 'SLA (服务级别协议)',
       chip: cn('border', detailSlaChipClass(ticket)),
       content: (
         <>
           <Clock className="w-3 h-3 shrink-0 opacity-80" />
-          <span>
-            SLA · <span className="font-semibold">{slaText}</span>
-          </span>
+          <span className="font-semibold">{slaText}</span>
         </>
       ),
     },
     {
       key: 'order',
+      title: '订单状态',
       chip: cn('border', detailOrderChipClass(order)),
       content: (
         <>
           <ord.Icon className="w-3 h-3 shrink-0 opacity-80" />
-          <span>
-            订单 · <span className="font-semibold">{ord.label}</span>
-          </span>
+          <span className="font-semibold">{ord.label}</span>
         </>
       ),
     },
     {
       key: 'intent',
+      title: '意图分类',
       chip: 'bg-purple-50 text-purple-900 border border-purple-200',
       content: (
         <>
           <Sparkles className="w-3 h-3 shrink-0 opacity-80" />
-          <span>
-            意图 · <span className="font-semibold">{ticket.intent || '未分类'}</span>
-          </span>
+          <span className="font-semibold">{ticket.intent || '未分类'}</span>
+          {intentRefreshable ? (
+            <button
+              type="button"
+              title="用 AI（豆包）识别意图并保存到工单"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void onIntentRefresh?.();
+              }}
+              disabled={intentRefreshLoading}
+              className={cn(
+                'inline-flex shrink-0 rounded-md p-0.5 text-purple-700 hover:bg-purple-100/90',
+                'disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-400/60'
+              )}
+            >
+              <RefreshCw
+                className={cn('w-3.5 h-3.5', intentRefreshLoading && 'animate-spin')}
+                strokeWidth={2}
+                aria-label="刷新意图识别"
+              />
+            </button>
+          ) : null}
         </>
       ),
     },
     {
       key: 'sentiment',
+      title: '情绪识别',
       chip: cn('border', detailSentimentChipClass(ticket.sentiment)),
       content: (
         <>
           <sent.Icon className="w-3 h-3 shrink-0 opacity-80" />
-          <span>
-            情绪 · <span className="font-semibold">{sent.label}</span>
-          </span>
+          <span className="font-semibold">{sent.label}</span>
+          {sentimentRefreshable ? (
+            <button
+              type="button"
+              title="用 AI（豆包）识别情绪并保存到工单"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void onSentimentRefresh?.();
+              }}
+              disabled={sentimentRefreshLoading}
+              className={cn(
+                'inline-flex shrink-0 rounded-md p-0.5 text-slate-500 hover:bg-slate-200/80',
+                'disabled:opacity-50 cursor-pointer focus:outline-none focus-visible:ring-2'
+              )}
+            >
+              <RefreshCw
+                className={cn('w-3.5 h-3.5', sentimentRefreshLoading && 'animate-spin')}
+                strokeWidth={2}
+                aria-label="刷新情绪识别"
+              />
+            </button>
+          ) : null}
         </>
       ),
     },
     {
       key: 'conv',
+      title: '会话处理状态',
       chip: cn('border', detailConvChipClass(ticket.messageProcessingStatus)),
       content: (
         <>
           <conv.Icon className="w-3 h-3 shrink-0 opacity-80" />
-          <span>
-            会话 · <span className="font-semibold">{conv.label}</span>
-          </span>
+          <span className="font-semibold">{conv.label}</span>
         </>
       ),
     },
@@ -466,8 +523,10 @@ export function TicketDetailStatusChips({
         return (
           <span
             key={c.key}
+            title={c.title}
             className={cn(
-              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium',
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors hover:shadow-sm',
+              (c.key === 'intent' || c.key === 'sentiment') && intentRefreshable ? 'cursor-default' : 'cursor-help',
               c.chip
             )}
           >
@@ -475,6 +534,7 @@ export function TicketDetailStatusChips({
           </span>
         );
       })}
+      {renderTicketSummaryButton && renderTicketSummaryButton}
     </div>
   );
 }

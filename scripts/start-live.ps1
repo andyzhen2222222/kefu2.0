@@ -35,5 +35,5 @@ npm run db:seed
 
 Write-Host ""
 Write-Host "[OK] Database ready. Run in two terminals:" -ForegroundColor Green
-Write-Host "  1) cd backend && npm run dev   (API http://localhost:4001)"
-Write-Host "  2) cd repo root && npm run dev:api   (UI http://localhost:4000 → 代理到 4001)"
+Write-Host "  1) cd backend && npm run dev   (API http://localhost:4000)"
+Write-Host "  2) cd repo root && npm run dev:api   (UI http://localhost:4001 → 代理到 4000)"

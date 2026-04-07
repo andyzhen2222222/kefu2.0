@@ -18,7 +18,7 @@ export enum Sentiment {
   JOYFUL = 'joyful',
 }
 
-/** 收件箱消息处理状态：未读 / 未回复 / 已回复 */
+/** 工单消息处理状态：未读 / 未回复 / 已回复 */
 export type MessageProcessingStatus = 'unread' | 'unreplied' | 'replied';
 
 export enum LogisticsStatus {
@@ -86,9 +86,40 @@ export interface Order {
   refundStatus?: string;
   returnStatus?: string;
   logisticsStatus?: LogisticsStatus;
+  logisticsPrimaryStatus?: string;
+  logisticsSecondaryStatus?: string;
+  logisticsStatusCode?: string;
+  logisticsSubStatusCode?: string;
+  isLogisticsException?: boolean;
+  logisticsLastSyncedAt?: string | null;
+  logisticsIsRegistered?: boolean;
   logisticsEvents?: LogisticsEvent[];
   carrier?: string;
+  paidAt?: string;
+  shippedAt?: string;
+  refundedAt?: string;
+  platformType?: string | null;
   hasVatInfo?: boolean;
+  eanList?: string[];
+  storeEntity?: StoreEntity;
+  /** 订单创建时间（平台/本地落库时间，ISO） */
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** 店铺主体信息：由母系统（Main System）维护并同步 */
+export interface StoreEntity {
+  id: string;
+  /** 法人/公司名称 */
+  legalName: string;
+  /** 店铺对外展示名称 */
+  displayName: string;
+  /** 注册地址 */
+  address: string;
+  /** VAT 税号 */
+  vatNumber: string;
+  /** 税务代码（部分地区需要） */
+  taxCode?: string;
 }
 
 export interface Ticket {
@@ -121,6 +152,14 @@ export interface Ticket {
   isFavorite: boolean;
   isShared: boolean;
   tags: string[];
+  /** 最近一条买家入站消息摘要（后端列表/详情填充；列表展示约 30 字） */
+  lastInboundPreview?: string | null;
+  /** 母系统 platform-site 同步：店铺默认货币（ISO），订单币种为空时用于金额展示 */
+  channelDefaultCurrency?: string | null;
+  /** 母系统 platform-site：平台/站点语言代码 */
+  channelPlatformLanguage?: string | null;
+  /** 已关联母系统会话；本地无消息时提示执行收件箱同步 */
+  motherConversationLinked?: boolean;
 }
 
 export interface Message {
@@ -140,6 +179,10 @@ export interface Message {
   sentPlatformText?: string;
   /** 客服出站消息实际送达的店铺/平台侧（演示用） */
   deliveryTargets?: ('customer' | 'manager')[];
+  /** 出站消息发送状态 */
+  deliveryStatus?: 'sending' | 'success' | 'failed';
+  /** 发送失败原因 */
+  deliveryError?: string;
 }
 
 export interface User {
@@ -182,14 +225,26 @@ export interface AfterSalesRecord {
   returnCarrier?: string;
   reissueSku?: string;
   reissueQuantity?: number;
+  /** 关联工单店铺展示名（接口返回，用于可读售后单号） */
+  channelShopLabel?: string;
+  channelPlatformType?: string | null;
+  /** 关联订单摘要（列表展示，来自订单 + 店铺） */
+  orderPlatformOrderId?: string;
+  orderAmount?: number;
+  orderCurrency?: string;
+  orderProductTitles?: string[];
+  orderChannelShopLabel?: string;
+  orderChannelPlatformType?: string | null;
 }
 
-/** 同帐号下可配置的客服角色（权限集合为演示用标签） */
+/** 同租户可配置角色；permissionKeys 与 `src/lib/seatPermissions.ts` 中键一致 */
 export interface CustomRole {
   id: string;
   name: string;
   description: string;
   permissionKeys: string[];
+  /** 所选权限包；与 permissionKeys 不一致时为 custom */
+  permissionTemplateId?: 'standard' | 'lead' | 'finance' | 'configurator' | 'full' | 'custom';
 }
 
 /** 客服坐席：登录帐号下的业务处理席位 */
@@ -207,14 +262,19 @@ export interface AgentSeat {
 
 /**
  * 工单/会话自动分配规则（与「未分配」池对应：无匹配或未启用坐席时进入未分配）
+ * conditions 存 JSON：`platformTypes` / `channelIds` / `afterSalesTypes` 均为 string[]，**空数组表示该维度不限**。
  */
 export interface TicketRoutingRule {
   id: string;
   priority: number;
-  /** 空表示不限 */
-  platform: string;
-  store: string;
-  afterSalesType: string;
+  /** 与后端评估同序：同具体度、同 priority 时按创建时间；演示数据可省略 */
+  createdAt?: string;
+  /** 平台类型（通常对应 Channel.platformType；演示可为展示用字符串） */
+  platformTypes: string[];
+  /** 店铺 channelId（UUID 或演示 id） */
+  channelIds: string[];
+  /** 售后归因字典 value，与字段管理「售后类型」一致 */
+  afterSalesTypes: string[];
   assignToSeatId: string;
   enabled: boolean;
 }

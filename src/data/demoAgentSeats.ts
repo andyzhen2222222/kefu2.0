@@ -19,7 +19,7 @@ export const DEMO_AGENT_SEATS_INITIAL: AgentSeat[] = [
     displayName: '王强',
     email: 'wang@company.com',
     account: 'wang.qiang',
-    roleId: 'role-agent',
+    roleId: 'role-finance',
     status: 'active',
     loginPasswordConfigured: true,
   },

@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { X, Search, Plus, Upload, Calendar, AlertCircle, Package, Sparkles, Loader2 } from 'lucide-react';
 import { cn, openFieldConfigPage } from '@/src/lib/utils';
+import { RETURN_CARRIER_DICT_ID, RETURN_CARRIER_SEED_ITEMS } from '@/src/lib/afterSalesFieldOptions';
 import { Order, AfterSalesType, type AfterSalesRecord } from '@/src/types';
 import { recognizeAfterSalesFromFeedback } from '@/src/services/geminiService';
 import {
@@ -67,6 +68,19 @@ export default function SubmitAfterSalesModal({
   const [isRecognizing, setIsRecognizing] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [returnTrackingNumber, setReturnTrackingNumber] = useState('');
+  const [returnCarrier, setReturnCarrier] = useState('');
+
+  const carrierSelectOptions = useMemo(() => {
+    const active = RETURN_CARRIER_SEED_ITEMS.filter((i) => i.status === 'active');
+    if (returnCarrier && !active.some((c) => c.value === returnCarrier)) {
+      return [
+        { id: '_legacy', label: `${returnCarrier}（历史）`, value: returnCarrier, status: 'active' as const },
+        ...active,
+      ];
+    }
+    return active;
+  }, [returnCarrier]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -78,6 +92,8 @@ export default function SubmitAfterSalesModal({
       setProblemType(initialData.problemType || '');
       setBuyerFeedback(initialData.buyerFeedback || '');
       setRefundAmount(initialData.refundAmount ?? '');
+      setReturnTrackingNumber(initialData.returnTrackingNumber?.trim() ?? '');
+      setReturnCarrier(initialData.returnCarrier?.trim() ?? '');
     } else {
       setType(AfterSalesType.REFUND);
       setHandlingMethod('待确认');
@@ -85,6 +101,8 @@ export default function SubmitAfterSalesModal({
       setProblemType('');
       setBuyerFeedback('');
       setRefundAmount('');
+      setReturnTrackingNumber('');
+      setReturnCarrier('');
       setSearchedOrder(null);
       setSearchOrderQuery('');
     }
@@ -93,16 +111,18 @@ export default function SubmitAfterSalesModal({
   if (!isOpen) return null;
 
   const currentOrder = order || searchedOrder;
-  const currentChannel = currentOrder?.channelId || '';
-  const isApiRefundSupported = ['Shopify', 'WooCommerce', '独立站'].includes(currentChannel);
+  const currentPlatformType = currentOrder?.platformType || '';
+  const isApiRefundSupported = ['SHOPIFY', 'WOOCOMMERCE', 'CDISCOUNT', 'OZON', 'WALMART_US', '独立站'].includes(currentPlatformType.toUpperCase());
 
   const handleAIRecognize = async () => {
-    if (!buyerFeedback.trim()) return;
+    setApiError(null);
     setIsRecognizing(true);
     try {
       const result = await recognizeAfterSalesFromFeedback(buyerFeedback, {
+        ticketId: apiSubmit?.defaultTicketId,
         maxRefund: currentOrder?.amount,
         currency: currentOrder?.currency,
+        onApiFailure: (msg) => setApiError(`AI 识别失败：${msg}（已用本地规则填充，可手动调整）`),
       });
       if (result.afterSalesType) setAfterSalesCategory(result.afterSalesType);
       setPriority(coerceAfterSalesPriority(result.priority));
@@ -115,6 +135,9 @@ export default function SubmitAfterSalesModal({
         result.processingType === AfterSalesType.REFUND
       ) {
         setRefundAmount(result.refundAmount);
+      }
+      if (result.summary) {
+        setBuyerFeedback(result.summary);
       }
     } finally {
       setIsRecognizing(false);
@@ -186,8 +209,7 @@ export default function SubmitAfterSalesModal({
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-1.5 col-span-2 md:col-span-1">
                   <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
-                    <span className="text-red-500">*</span>{' '}
-                    {apiSubmit ? '平台订单号' : '订单号搜索'}:
+                    <span className="text-red-500">*</span> 平台订单号:
                   </label>
                   <div className="relative flex gap-2">
                     <div className="relative flex-1">
@@ -208,19 +230,10 @@ export default function SubmitAfterSalesModal({
                       搜索带入
                     </button>
                   </div>
-                  {apiSubmit && !initialData ? (
-                    <p className="text-[11px] text-slate-400 col-span-2">
-                      输入平台订单号搜索即可；系统会按订单自动关联工单（无工单时会自动创建）。
-                    </p>
-                  ) : null}
                 </div>
               </div>
               
-              {!searchedOrder ? (
-                <div className="p-4 bg-slate-50 border border-slate-200 border-dashed rounded-xl flex items-center justify-center text-sm text-slate-400">
-                  请先搜索并选择订单，系统将自动带入订单详情与买家信息
-                </div>
-              ) : (
+              {searchedOrder && (
                 <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
                   <div className="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
                     <span className="text-sm font-bold text-slate-900 flex items-center gap-2">
@@ -307,17 +320,46 @@ export default function SubmitAfterSalesModal({
               {type === AfterSalesType.REFUND && (
                 <div className="grid grid-cols-2 gap-6">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
-                      <span className="text-red-500">*</span> 退款金额 ({currentOrder?.currency || 'USD'}):
+                    <label className="text-xs font-medium text-slate-500 flex items-center justify-between gap-1">
+                      <span className="flex items-center gap-1">
+                        <span className="text-red-500">*</span> 退款金额 ({currentOrder?.currency || 'USD'}):
+                      </span>
+                      {currentOrder?.amount && (
+                        <button
+                          type="button"
+                          onClick={() => setRefundAmount(currentOrder.amount)}
+                          className="text-[10px] text-[#F97316] font-bold hover:underline"
+                        >
+                          全额退款
+                        </button>
+                      )}
                     </label>
-                    <input 
-                      type="number" 
-                      value={refundAmount}
-                      onChange={(e) => setRefundAmount(e.target.value ? Number(e.target.value) : '')}
-                      max={currentOrder?.amount}
-                      placeholder={`最大可退: ${currentOrder?.amount || 0}`}
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]" 
-                    />
+                    <div className="relative flex flex-col gap-1">
+                      <input 
+                        type="number" 
+                        value={refundAmount}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const num = Number(val);
+                          // We allow typing anything but show an error if it's over the limit
+                          setRefundAmount(val === '' ? '' : num);
+                        }}
+                        max={currentOrder?.amount}
+                        placeholder={`最大可退: ${currentOrder?.amount || 0}`}
+                        className={cn(
+                          "w-full px-3 py-2 bg-white border rounded-lg text-sm focus:outline-none focus:ring-2",
+                          typeof refundAmount === 'number' && currentOrder?.amount && refundAmount > currentOrder.amount
+                            ? "border-red-400 focus:border-red-500 focus:ring-red-500/20 text-red-600 bg-red-50/50"
+                            : "border-slate-200 focus:border-[#F97316] focus:ring-[#F97316]/20"
+                        )} 
+                      />
+                      {typeof refundAmount === 'number' && currentOrder?.amount && refundAmount > currentOrder.amount && (
+                        <p className="text-[10px] font-bold text-red-500 flex items-center gap-1 absolute -bottom-5 left-1">
+                          <AlertCircle className="w-3 h-3" />
+                          金额不可超过订单实际支付最大可退金额
+                        </p>
+                      )}
+                    </div>
                   </div>
             <div className="space-y-1.5">
                 <label className="text-xs font-medium text-slate-500 flex items-center justify-between">
@@ -385,16 +427,18 @@ export default function SubmitAfterSalesModal({
                             <div className={cn("w-4 h-4 rounded-full border flex items-center justify-center", refundExecutionType === 'api' ? "border-green-500" : "border-slate-300")}>
                               {refundExecutionType === 'api' && <div className="w-2 h-2 rounded-full bg-green-500" />}
                             </div>
-                            <div className="font-bold text-sm text-slate-900">API 自动原路退款</div>
+                            <div className="font-bold text-sm text-slate-900">平台原路退回</div>
                           </div>
                           {isApiRefundSupported ? (
                             <span className="bg-green-100 text-green-700 text-[10px] px-1.5 py-0.5 rounded font-bold">支持</span>
                           ) : (
-                            <span className="bg-slate-200 text-slate-500 text-[10px] px-1.5 py-0.5 rounded font-bold" title={`${currentChannel || '当前'}平台不支持API退款`}>不支持</span>
+                            <span className="bg-slate-200 text-slate-500 text-[10px] px-1.5 py-0.5 rounded font-bold">不支持</span>
                           )}
                         </div>
                         <div className="text-xs text-slate-500 pl-6">
-                          提交后直接调用 {currentChannel ? <span className="font-medium">{currentChannel}</span> : '平台'} API 完成退款。
+                          {isApiRefundSupported 
+                            ? `提交后直接通过 ${currentOrder?.platformType || '平台'} 系统完成原路退款。`
+                            : `${currentOrder?.platformType || '当前平台'} 暂不支持直接原路退回。`}
                         </div>
                       </label>
                     </div>
@@ -409,21 +453,39 @@ export default function SubmitAfterSalesModal({
                     <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
                       <span className="text-red-500">*</span> 退回物流单号:
                     </label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
+                      value={returnTrackingNumber}
+                      onChange={(e) => setReturnTrackingNumber(e.target.value)}
                       placeholder="请输入买家退回的物流单号"
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]" 
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
-                      <span className="text-red-500">*</span> 退回承运商:
+                    <label className="text-xs font-medium text-slate-500 flex items-center justify-between">
+                      <span className="flex items-center gap-1">
+                        <span className="text-red-500">*</span> 退回承运商:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => openFieldConfigPage(RETURN_CARRIER_DICT_ID)}
+                        className="text-[10px] text-[#F97316] font-medium hover:underline"
+                      >
+                        管理承运商
+                      </button>
                     </label>
-                    <input 
-                      type="text" 
-                      placeholder="例如: USPS, UPS"
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]" 
-                    />
+                    <select
+                      value={returnCarrier}
+                      onChange={(e) => setReturnCarrier(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+                    >
+                      <option value="">请选择承运商</option>
+                      {carrierSelectOptions.map((c) => (
+                        <option key={c.id} value={c.value}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               )}
@@ -478,7 +540,7 @@ export default function SubmitAfterSalesModal({
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
-                  <span className="text-red-500">*</span> 客户签收时间:
+                  客户签收时间:
                 </label>
                 <div className="relative">
                   <input type="date" className="w-full pl-3 pr-10 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
@@ -487,7 +549,7 @@ export default function SubmitAfterSalesModal({
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
-                  <span className="text-red-500">*</span> 客户反馈时间:
+                  客户反馈时间:
                 </label>
                 <div className="relative">
                   <input type="date" className="w-full pl-3 pr-10 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
@@ -498,7 +560,7 @@ export default function SubmitAfterSalesModal({
 
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
-                <span className="text-red-500">*</span> 买家反馈:
+                买家反馈:
               </label>
               <div className="flex gap-2">
                 <textarea 
@@ -526,12 +588,6 @@ export default function SubmitAfterSalesModal({
                       <Sparkles className="w-3.5 h-3.5" />
                     )}
                     AI 自动识别
-                  </button>
-                  <button
-                    type="button"
-                    className="px-4 py-2 bg-[#F97316] text-white rounded-lg text-xs font-bold hover:bg-[#ea580c] transition-colors"
-                  >
-                    添加
                   </button>
                 </div>
               </div>
@@ -569,8 +625,15 @@ export default function SubmitAfterSalesModal({
                   setApiError('请先搜索并匹配订单');
                   return;
                 }
-                if (!buyerFeedback.trim()) {
-                  setApiError('请填写买家反馈');
+                if (type === AfterSalesType.REFUND && typeof refundAmount === 'number' && currentOrder.amount && refundAmount > currentOrder.amount) {
+                  setApiError('退款金额不可超过订单最大可退金额');
+                  return;
+                }
+                if (
+                  (type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE) &&
+                  (!returnTrackingNumber.trim() || !returnCarrier.trim())
+                ) {
+                  setApiError('请填写退回物流单号并选择退回承运商');
                   return;
                 }
                 setSubmitting(true);
@@ -589,6 +652,13 @@ export default function SubmitAfterSalesModal({
                       refundAmount === '' || refundAmount === undefined
                         ? undefined
                         : Number(refundAmount),
+                    refundExecutionType,
+                    ...(type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE
+                      ? {
+                          returnTrackingNumber: returnTrackingNumber.trim(),
+                          returnCarrier: returnCarrier.trim(),
+                        }
+                      : {}),
                   });
                   await apiSubmit.onSuccess();
                   onClose();
@@ -600,6 +670,17 @@ export default function SubmitAfterSalesModal({
                 return;
               }
               if (apiSubmit && initialData?.id) {
+                if (type === AfterSalesType.REFUND && typeof refundAmount === 'number' && currentOrder?.amount && refundAmount > currentOrder.amount) {
+                  setApiError('退款金额不可超过订单最大可退金额');
+                  return;
+                }
+                if (
+                  (type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE) &&
+                  (!returnTrackingNumber.trim() || !returnCarrier.trim())
+                ) {
+                  setApiError('请填写退回物流单号并选择退回承运商');
+                  return;
+                }
                 setSubmitting(true);
                 try {
                   await patchAfterSalesRecord(
@@ -615,6 +696,12 @@ export default function SubmitAfterSalesModal({
                         refundAmount === '' || refundAmount === undefined
                           ? undefined
                           : Number(refundAmount),
+                      ...(type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE
+                        ? {
+                            returnTrackingNumber: returnTrackingNumber.trim(),
+                            returnCarrier: returnCarrier.trim(),
+                          }
+                        : {}),
                     }
                   );
                   await apiSubmit.onSuccess();
@@ -637,6 +724,12 @@ export default function SubmitAfterSalesModal({
                 refundAmount,
                 refundExecutionType,
                 afterSalesCategory,
+                ...(type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE
+                  ? {
+                      returnTrackingNumber: returnTrackingNumber.trim(),
+                      returnCarrier: returnCarrier.trim(),
+                    }
+                  : {}),
               });
               onClose();
             }}
@@ -654,7 +747,7 @@ export default function SubmitAfterSalesModal({
               : type === AfterSalesType.REFUND &&
                   refundExecutionType === 'api' &&
                   refundAmount
-                ? `提交并原路退款 (${currentOrder?.currency || 'USD'} ${refundAmount})`
+                ? `提交并原路退回 (${currentOrder?.currency || 'USD'} ${refundAmount})`
                 : '提交售后'}
           </button>
         </div>
