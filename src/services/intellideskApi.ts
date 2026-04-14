@@ -928,6 +928,27 @@ export async function fetchDashboardTrends(
   return res.json() as Promise<{ range: string; series: TrendPoint[] }>;
 }
 
+/** 工作台 AI 洞察用：售后分布、工单工作流、SLA 临近、在途退款金额 */
+export type DashboardAiContext = {
+  generatedAt: string;
+  afterSalesByStatusZh: Record<string, number>;
+  afterSalesByTypeZh: Record<string, number>;
+  ticketsByWorkflowStatusZh: Record<string, number>;
+  slaDueWithin24hCount: number;
+  openRefundAmountSum: string | null;
+};
+
+export async function fetchDashboardAiContext(
+  tenantId: string,
+  userId: string | undefined
+): Promise<DashboardAiContext> {
+  const res = await fetch(`${base()}/api/dashboard/ai-context`, {
+    headers: await intellideskHeadersWithAuth(tenantId, userId),
+  });
+  if (!res.ok) throw new Error(await parseError(res));
+  return res.json() as Promise<DashboardAiContext>;
+}
+
 // --- After-sales ---
 
 export type ApiAfterSalesRaw = {

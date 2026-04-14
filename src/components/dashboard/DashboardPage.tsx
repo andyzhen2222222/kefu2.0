@@ -31,15 +31,22 @@ import {
   intellideskConfigured,
   intellideskTenantId,
   intellideskUserIdForApi,
+  fetchDashboardAiContext,
   fetchDashboardInboxMetrics,
   fetchDashboardStructure,
   fetchDashboardTrends,
   intellideskFetchErrorMessage,
   setGlobalApiError,
   formatAiUserVisibleError,
+  type DashboardAiContext,
   type DashboardInboxMetrics,
+  type DashboardStructure,
   type StructureBucket,
 } from '@/src/services/intellideskApi';
+import {
+  DASHBOARD_AI_INSIGHT_SYSTEM_PROMPT,
+  buildDashboardInsightUserContent,
+} from '@/src/lib/dashboardAiInsightPrompt';
 import { Link } from 'react-router-dom';
 import OnlineSeatsModal from './OnlineSeatsModal';
 import { DEMO_AGENT_SEATS_INITIAL, DEMO_SEAT_ONLINE_BY_ID } from '@/src/data/demoAgentSeats';
@@ -278,16 +285,12 @@ export default function DashboardPage() {
   const [isGeneratingInsight, setIsGeneratingInsight] = useState(false);
   const [onlineSeatsOpen, setOnlineSeatsOpen] = useState(false);
   const [apiMetrics, setApiMetrics] = useState<DashboardInboxMetrics | null>(null);
-  const [apiStructure, setApiStructure] = useState<{
-    afterSalesIntent: StructureBucket;
-    sentiment: StructureBucket;
-    orderStatus: StructureBucket;
-    channels?: StructureBucket;
-  } | null>(null);
+  const [apiStructure, setApiStructure] = useState<DashboardStructure | null>(null);
   const [trendRange, setTrendRange] = useState<'7d' | '30d'>('7d');
   const [trendSeries, setTrendSeries] = useState<{ name: string; tickets: number; resolved: number }[]>(
     []
   );
+  const [apiAiContext, setApiAiContext] = useState<DashboardAiContext | null>(null);
   const [dashLoading, setDashLoading] = useState(false);
   const [dashError, setDashError] = useState<string | null>(null);
 
@@ -322,10 +325,21 @@ export default function DashboardPage() {
         setApiMetrics(m);
         setApiStructure(s);
         setTrendSeries(t.series);
+        try {
+          const ctx = await fetchDashboardAiContext(tenantId, apiUserId);
+          if (!cancelled) setApiAiContext(ctx);
+        } catch {
+          if (!cancelled) setApiAiContext(null);
+        }
       } catch (e) {
-        if (!cancelled) setDashError(intellideskFetchErrorMessage(e));
+        if (!cancelled) {
+          setDashError(intellideskFetchErrorMessage(e));
+          setApiAiContext(null);
+        }
       } finally {
-        if (!cancelled) setDashLoading(false);
+        if (!cancelled) {
+          setDashLoading(false);
+        }
       }
     })();
     return () => {
@@ -409,21 +423,51 @@ export default function DashboardPage() {
     [liveDash, trendSeries]
   );
 
+  /** 离线演示：与饼图 Mock 一致的 structure，供 AI 洞察拼装上下文 */
+  const demoStructureForAi = useMemo((): DashboardStructure => {
+    const toBucket = (slices: DistSlice[]): StructureBucket => {
+      const total = slices.reduce((a, x) => a + (x.count ?? x.value), 0) || 1;
+      const o: StructureBucket = {};
+      for (const x of slices) {
+        const c = x.count ?? x.value;
+        o[x.name] = { count: Math.round(c), percent: Math.round((c / total) * 1000) / 10 };
+      }
+      return o;
+    };
+    return {
+      afterSalesIntent: toBucket(AFTER_SALES_TYPE_DIST),
+      sentiment: toBucket(BUYER_SENTIMENT_DIST),
+      orderStatus: toBucket(ORDER_STATUS_DIST),
+      channels: {
+        Amazon: { count: 45, percent: 45 },
+        eBay: { count: 30, percent: 30 },
+        Shopify: { count: 25, percent: 25 },
+      },
+    };
+  }, []);
+
   useEffect(() => {
     const generateInsight = async () => {
+      if (liveDash && (dashLoading || !apiMetrics || !apiStructure)) return;
+
       setIsGeneratingInsight(true);
       setGlobalApiError(null);
-      const statsLine =
-        liveDash && apiMetrics
-          ? `未读 ${apiMetrics.unread.current}、已读未回复 ${apiMetrics.unreplied.current}、已回复 ${apiMetrics.replied.current}、SLA超时 ${apiMetrics.slaOverdue.current}。`
-          : 'Dashboard Stats: Total Tickets: 1284 (+12.5%), Avg Response Time: 1h 24m (-18.4%), SLA: 98.2%.';
+
+      const seriesForAi =
+        liveDash && trendSeries.length > 0 ? trendSeries : MOCK_CHART_DATA;
+
+      const userContent = buildDashboardInsightUserContent({
+        liveDash,
+        metrics: liveDash ? apiMetrics : null,
+        structure: liveDash ? apiStructure : demoStructureForAi,
+        trendRange,
+        trendSeries: seriesForAi,
+        aiContext: liveDash ? apiAiContext : null,
+      });
+
       const mockConversation = [
-        { role: 'system' as const, content: statsLine },
-        {
-          role: 'user' as const,
-          content:
-            'Provide a 2-sentence summary of our current performance and one actionable recommendation in Chinese.',
-        },
+        { role: 'system' as const, content: DASHBOARD_AI_INSIGHT_SYSTEM_PROMPT },
+        { role: 'user' as const, content: userContent },
       ];
       try {
         const summary = await summarizeTicket(mockConversation);
@@ -437,7 +481,16 @@ export default function DashboardPage() {
     };
 
     void generateInsight();
-  }, [liveDash, apiMetrics]);
+  }, [
+    liveDash,
+    dashLoading,
+    apiMetrics,
+    apiStructure,
+    apiAiContext,
+    trendRange,
+    trendSeries,
+    demoStructureForAi,
+  ]);
 
   return (
     <div className="p-8 space-y-8 bg-slate-50/50 min-h-full">

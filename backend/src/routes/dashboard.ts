@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { TicketStatus } from '@prisma/client';
+import { AfterSalesStatus, AfterSalesType, TicketStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { platformGroupLabelForTicket } from '../lib/platformLabels.js';
 import type { TenantRequest } from '../middleware/tenant.js';
@@ -199,6 +199,112 @@ router.get('/trends', async (req: TenantRequest, res) => {
     console.error('[GET /api/dashboard/trends]', e);
     res.status(500).json({
       error: 'dashboard_trends_failed',
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
+});
+
+function afterSalesStatusZh(s: AfterSalesStatus): string {
+  const m: Record<string, string> = {
+    submitted: '已提交',
+    processing: '处理中',
+    completed: '已完成',
+    rejected: '已拒绝',
+  };
+  return m[s] ?? String(s);
+}
+
+function afterSalesTypeZh(t: AfterSalesType): string {
+  const m: Record<string, string> = {
+    refund: '退款',
+    return: '退货',
+    exchange: '换货',
+    reissue: '补发',
+  };
+  return m[t] ?? String(t);
+}
+
+function ticketWorkflowStatusZh(s: TicketStatus): string {
+  const m: Record<string, string> = {
+    new: '新建',
+    todo: '待办',
+    waiting: '等待买家',
+    snoozed: '已暂停',
+    resolved: '已解决',
+    spam: '垃圾/无效',
+  };
+  return m[s] ?? String(s);
+}
+
+/** 供工作台 AI 洞察：售后单分布、工单工作流状态、SLA 24h 内将到期、在途退款金额估算 */
+router.get('/ai-context', async (req: TenantRequest, res) => {
+  try {
+    const tenantId = req.tenantId!;
+    const now = new Date();
+    const in24h = addMs(now, 86400000);
+
+    const [asStatus, asType, ticketSt, slaSoon, refundAgg] = await Promise.all([
+      prisma.afterSalesRecord.groupBy({
+        by: ['status'],
+        where: { tenantId, deletedAt: null },
+        _count: { _all: true },
+      }),
+      prisma.afterSalesRecord.groupBy({
+        by: ['type'],
+        where: { tenantId, deletedAt: null },
+        _count: { _all: true },
+      }),
+      prisma.ticket.groupBy({
+        by: ['status'],
+        where: { tenantId },
+        _count: { _all: true },
+      }),
+      prisma.ticket.count({
+        where: {
+          tenantId,
+          status: { notIn: [TicketStatus.resolved, TicketStatus.spam] },
+          slaDueAt: { gte: now, lte: in24h },
+        },
+      }),
+      prisma.afterSalesRecord.aggregate({
+        where: {
+          tenantId,
+          deletedAt: null,
+          type: AfterSalesType.refund,
+          status: { in: [AfterSalesStatus.submitted, AfterSalesStatus.processing] },
+        },
+        _sum: { refundAmount: true },
+      }),
+    ]);
+
+    const afterSalesByStatusZh: Record<string, number> = {};
+    for (const row of asStatus) {
+      afterSalesByStatusZh[afterSalesStatusZh(row.status)] = row._count._all;
+    }
+    const afterSalesByTypeZh: Record<string, number> = {};
+    for (const row of asType) {
+      afterSalesByTypeZh[afterSalesTypeZh(row.type)] = row._count._all;
+    }
+    const ticketsByWorkflowStatusZh: Record<string, number> = {};
+    for (const row of ticketSt) {
+      ticketsByWorkflowStatusZh[ticketWorkflowStatusZh(row.status)] = row._count._all;
+    }
+
+    const sum = refundAgg._sum.refundAmount;
+    const openRefundAmountSum = sum != null ? String(sum) : null;
+
+    res.json({
+      generatedAt: now.toISOString(),
+      afterSalesByStatusZh,
+      afterSalesByTypeZh,
+      ticketsByWorkflowStatusZh,
+      slaDueWithin24hCount: slaSoon,
+      openRefundAmountSum,
+    });
+  } catch (e) {
+    console.error('[GET /api/dashboard/ai-context]', e);
+    res.status(500).json({
+      error: 'dashboard_ai_context_failed',
       message: e instanceof Error ? e.message : String(e),
     });
   }

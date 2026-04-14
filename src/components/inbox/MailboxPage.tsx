@@ -1793,6 +1793,8 @@ export default function MailboxPage() {
                 listSearchQuery: inboxListSearchInput,
                 onListSearchQueryChange: setInboxListSearchInput,
                 listSearchServerBacked: true,
+                listReloading: listLoading,
+                onReloadList: () => setListReloadNonce((n) => n + 1),
               }
             : {})}
         />

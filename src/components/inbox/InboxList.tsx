@@ -1,6 +1,16 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Filter, Inbox, ChevronDown, ChevronRight, Store, ArrowUpDown, RefreshCw, Loader2, Plus } from 'lucide-react';
+import {
+  Search,
+  Filter,
+  Inbox,
+  ArrowUpDown,
+  RefreshCw,
+  Loader2,
+  Plus,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { Ticket, TicketStatus, Order, Customer, Sentiment } from '@/src/types';
 import { formatDistanceToNow } from 'date-fns';
@@ -33,6 +43,8 @@ const ORDER_STATUS_LABEL: Record<string, string> = {
 };
 
 const INBOX_PREVIEW_MAX = 30;
+/** 左侧工单列表按店铺分页（模拟异步分页加载） */
+const INBOX_SHOP_PAGE_SIZE = 8;
 
 /** 列表第二行：优先展示最近一条买家消息摘要，否则回退主题 */
 function inboxListPreviewLine(ticket: Ticket): string {
@@ -71,6 +83,10 @@ interface InboxListProps {
   onListSearchQueryChange?: (q: string) => void;
   /** 为 true 时不在本地再按搜索词过滤（列表已由后端按 search 筛过） */
   listSearchServerBacked?: boolean;
+  /** 联调：正在重新拉取工单列表（与右侧刷新按钮联动） */
+  listReloading?: boolean;
+  /** 联调：点击后触发父组件重新请求工单列表 */
+  onReloadList?: () => void;
 }
 
 export default function InboxList({
@@ -84,6 +100,8 @@ export default function InboxList({
   listSearchQuery: listSearchQueryProp,
   onListSearchQueryChange,
   listSearchServerBacked = false,
+  listReloading = false,
+  onReloadList,
 }: InboxListProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -102,17 +120,10 @@ export default function InboxList({
   const [inboxSyncing, setInboxSyncing] = useState(false);
   const [inboxSyncHint, setInboxSyncHint] = useState<string | null>(null);
 
-  // Tree state
-  const [expandedPlatforms, setExpandedPlatforms] = useState<Record<string, boolean>>({});
-  const [expandedShops, setExpandedShops] = useState<Record<string, boolean>>({});
-
-  const togglePlatform = (platform: string) => {
-    setExpandedPlatforms(prev => ({ ...prev, [platform]: !prev[platform] }));
-  };
-
-  const toggleShop = (shop: string) => {
-    setExpandedShops(prev => ({ ...prev, [shop]: !prev[shop] }));
-  };
+  const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
+  const [selectedShop, setSelectedShop] = useState<string | null>(null);
+  const [shopTicketsPage, setShopTicketsPage] = useState(0);
+  const [shopListLoading, setShopListLoading] = useState(false);
 
   const channelOptions = useMemo(() => {
     const s = new Set<string>();
@@ -267,28 +278,95 @@ export default function InboxList({
     }, {} as Record<string, Record<string, Ticket[]>>);
   }, [displayTickets]);
 
-  useEffect(() => {
-    const pKeys = Object.keys(groupedTickets);
-    if (pKeys.length === 0) return;
-    setExpandedPlatforms((prev) => {
-      if (Object.keys(prev).length > 0) return prev;
-      const initial: Record<string, boolean> = {};
-      pKeys.forEach((k) => {
-        initial[k] = true;
-      });
-      return initial;
-    });
-    setExpandedShops((prev) => {
-      if (Object.keys(prev).length > 0) return prev;
-      const initial: Record<string, boolean> = {};
-      Object.values(groupedTickets).forEach((shops) => {
-        Object.keys(shops).forEach((shop) => {
-          initial[shop] = true;
-        });
-      });
-      return initial;
-    });
+  const sortedPlatforms = useMemo(
+    () => Object.keys(groupedTickets).sort((a, b) => a.localeCompare(b, 'zh-CN')),
+    [groupedTickets]
+  );
+
+  const platformTicketCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const [p, shops] of Object.entries(groupedTickets)) {
+      m[p] = Object.values(shops).flat().length;
+    }
+    return m;
   }, [groupedTickets]);
+
+  const sortedShopsForPlatform = useMemo(() => {
+    if (!selectedPlatform || !groupedTickets[selectedPlatform]) return [];
+    return Object.keys(groupedTickets[selectedPlatform]).sort((a, b) =>
+      a.localeCompare(b, 'zh-CN')
+    );
+  }, [groupedTickets, selectedPlatform]);
+
+  const shopTicketCounts = useMemo(() => {
+    if (!selectedPlatform || !groupedTickets[selectedPlatform]) return {} as Record<string, number>;
+    const m: Record<string, number> = {};
+    for (const [shop, list] of Object.entries(groupedTickets[selectedPlatform])) {
+      m[shop] = list.length;
+    }
+    return m;
+  }, [groupedTickets, selectedPlatform]);
+
+  useLayoutEffect(() => {
+    if (sortedPlatforms.length === 0) {
+      setSelectedPlatform(null);
+      setSelectedShop(null);
+      return;
+    }
+    setSelectedPlatform((prev) => (prev && groupedTickets[prev] ? prev : sortedPlatforms[0]));
+  }, [groupedTickets, sortedPlatforms]);
+
+  useLayoutEffect(() => {
+    if (!selectedPlatform || !groupedTickets[selectedPlatform]) {
+      setSelectedShop(null);
+      return;
+    }
+    const sKeys = Object.keys(groupedTickets[selectedPlatform]).sort((a, b) =>
+      a.localeCompare(b, 'zh-CN')
+    );
+    if (sKeys.length === 0) {
+      setSelectedShop(null);
+      return;
+    }
+    setSelectedShop((prev) =>
+      prev && groupedTickets[selectedPlatform][prev] ? prev : sKeys[0]
+    );
+  }, [groupedTickets, selectedPlatform]);
+
+  useEffect(() => {
+    setShopTicketsPage(0);
+  }, [selectedShop]);
+
+  const shopLoadingSkipOnce = useRef(true);
+  useEffect(() => {
+    if (!selectedShop) {
+      setShopListLoading(false);
+      return;
+    }
+    if (shopLoadingSkipOnce.current) {
+      shopLoadingSkipOnce.current = false;
+      return;
+    }
+    setShopListLoading(true);
+    const t = window.setTimeout(() => setShopListLoading(false), 240);
+    return () => window.clearTimeout(t);
+  }, [selectedShop]);
+
+  const ticketsForSelectedShop = useMemo(() => {
+    if (!selectedPlatform || !selectedShop) return [];
+    return groupedTickets[selectedPlatform]?.[selectedShop] ?? [];
+  }, [groupedTickets, selectedPlatform, selectedShop]);
+
+  const shopTotalPages = Math.max(1, Math.ceil(ticketsForSelectedShop.length / INBOX_SHOP_PAGE_SIZE));
+  const safeShopPage = Math.min(shopTicketsPage, shopTotalPages - 1);
+  const pagedShopTickets = useMemo(() => {
+    const start = safeShopPage * INBOX_SHOP_PAGE_SIZE;
+    return ticketsForSelectedShop.slice(start, start + INBOX_SHOP_PAGE_SIZE);
+  }, [ticketsForSelectedShop, safeShopPage]);
+
+  useEffect(() => {
+    setShopTicketsPage((p) => Math.min(p, Math.max(0, shopTotalPages - 1)));
+  }, [shopTotalPages]);
 
   const resetFilters = () => {
     setFilterChannel('');
@@ -495,10 +573,10 @@ export default function InboxList({
         )}
       </div>
 
-      {/* Ticket List */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Ticket List：平台 → 店铺 → 分页工单 */}
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {displayTickets.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full p-8 text-center">
+          <div className="flex flex-col items-center justify-center h-full p-8 text-center overflow-y-auto">
             <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mb-4">
               <Inbox className="w-6 h-6 text-slate-300" />
             </div>
@@ -506,133 +584,235 @@ export default function InboxList({
             <p className="text-xs text-slate-500 mt-1">当前过滤条件下没有找到工单</p>
           </div>
         ) : (
-          <div className="pb-4">
-            {Object.entries(groupedTickets).map(([platform, shops]) => (
-              <div key={platform} className="border-b border-slate-200/70 last:border-0">
-                {/* Platform Header */}
-                <button 
-                  onClick={() => togglePlatform(platform)}
-                  className="w-full flex items-center justify-between p-2.5 bg-slate-50/80 hover:bg-slate-100/90 transition-colors"
+          <div className="flex flex-col flex-1 min-h-0">
+            <div className="shrink-0 border-b border-slate-200/80 bg-white px-3 py-2">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <label
+                  htmlFor="inbox-list-platform"
+                  className="shrink-0 text-[10px] font-medium text-slate-500"
                 >
-                  <div className="flex items-center gap-2">
-                    {expandedPlatforms[platform] ? (
-                      <ChevronDown className="w-4 h-4 text-slate-400" />
-                    ) : (
-                      <ChevronRight className="w-4 h-4 text-slate-400" />
-                    )}
-                    <span className="text-[13px] font-semibold text-slate-700">{platform}</span>
-                  </div>
-                  <span className="text-[11px] font-medium tabular-nums text-slate-500 bg-white px-2 py-0.5 rounded-md border border-slate-200/90">
-                    {Object.values(shops).flat().length}
+                  平台
+                </label>
+                <select
+                  id="inbox-list-platform"
+                  aria-label="收件箱：选择平台"
+                  title="选择平台"
+                  className="min-w-0 flex-1 rounded-md border border-slate-200/90 bg-slate-50/90 py-1 pl-1.5 pr-5 text-[11px] text-slate-700 outline-none focus:border-[#F97316] focus:ring-1 focus:ring-orange-200/80"
+                  value={selectedPlatform ?? ''}
+                  onChange={(e) => setSelectedPlatform(e.target.value)}
+                >
+                  {sortedPlatforms.map((platform) => (
+                    <option key={platform} value={platform}>
+                      {platform}（{platformTicketCounts[platform] ?? 0}）
+                    </option>
+                  ))}
+                </select>
+
+                <label
+                  htmlFor="inbox-list-shop"
+                  className="shrink-0 text-[10px] font-medium text-slate-500"
+                >
+                  店铺
+                </label>
+                {sortedShopsForPlatform.length === 0 ? (
+                  <span className="min-w-0 flex-1 truncate rounded-md border border-dashed border-slate-200/90 bg-slate-50/50 py-1 pl-1.5 text-[11px] text-slate-400">
+                    暂无店铺
                   </span>
-                </button>
-
-                {/* Platform Content */}
-                {expandedPlatforms[platform] && (
-                  <div className="pl-2">
-                    {Object.entries(shops).map(([shop, shopTickets]) => (
-                      <div key={shop} className="border-l border-slate-200/80 ml-3 my-0.5">
-                        {/* Shop Header */}
-                        <button 
-                          onClick={() => toggleShop(shop)}
-                          className="w-full flex items-center justify-between py-1.5 px-2 hover:bg-slate-50/90 transition-colors rounded-r-lg"
-                        >
-                          <div className="flex items-center gap-1.5">
-                            {expandedShops[shop] ? (
-                              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-                            ) : (
-                              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                            )}
-                            <Store className="w-3.5 h-3.5 text-slate-400" strokeWidth={2} />
-                            <span className="text-[12px] font-medium text-slate-600">{shop}</span>
-                          </div>
-                          <span className="text-[10px] font-medium tabular-nums text-slate-500">
-                            {shopTickets.length}
-                          </span>
-                        </button>
-
-                        {/* Shop Tickets */}
-                        {expandedShops[shop] && (
-                          <div className="ml-2 border border-slate-200/80 rounded-lg overflow-hidden bg-slate-50/50">
-                            {shopTickets.map((ticket) => {
-                              const order = ticket.orderId ? orders[ticket.orderId] : null;
-                              const previewLine = inboxListPreviewLine(ticket);
-                              const previewTitle = inboxListPreviewTitle(ticket);
-                              const buyerName = customers[ticket.customerId]?.name ?? '买家';
-
-                              const isSelected = selectedTicketId === ticket.id;
-                              const showUnreadDot =
-                                ticket.messageProcessingStatus === 'unread' || ticket.status === TicketStatus.NEW;
-
-                              return (
-                                <div
-                                  key={ticket.id}
-                                  onClick={() => navigate(`/mailbox/${ticket.id}${mailboxSearchSuffix}`)}
-                                  onMouseEnter={() => onTicketHover?.(ticket.id)}
-                                  className={cn(
-                                    'px-3 py-2.5 cursor-pointer transition-colors relative border-b border-slate-200/70 last:border-b-0',
-                                    isSelected
-                                      ? 'bg-slate-100/90 hover:bg-slate-100'
-                                      : 'bg-white hover:bg-slate-50/90'
-                                  )}
-                                >
-                                  {isSelected && (
-                                    <div className="absolute left-0 top-2 bottom-2 w-px bg-orange-400/90 rounded-full" />
-                                  )}
-
-                                  <div className={cn('min-w-0', isSelected ? 'pl-2.5' : 'pl-1')}>
-                                    <div className="flex items-center gap-1.5 min-h-[15px] justify-start">
-                                      <span
-                                        className={cn(
-                                          'w-1 h-1 rounded-full shrink-0',
-                                          showUnreadDot ? 'bg-rose-500/90' : 'bg-transparent'
-                                        )}
-                                        aria-hidden
-                                      />
-                                      <span
-                                        className="text-xs font-bold text-slate-700 truncate min-w-0 flex-1 text-left"
-                                        title={buyerName}
-                                      >
-                                        {buyerName}
-                                      </span>
-                                      <span className="text-[11px] text-slate-500 tabular-nums shrink-0">
-                                        {formatDistanceToNow(new Date(ticket.createdAt), {
-                                          addSuffix: true,
-                                          locale: zhCN,
-                                        })}
-                                      </span>
-                                    </div>
-                                    <h3
-                                      className={cn(
-                                        'text-[13px] leading-snug line-clamp-2 mt-1',
-                                        showUnreadDot ? 'text-slate-800 font-medium' : 'text-slate-600 font-normal'
-                                      )}
-                                      title={`${previewTitle}\n完整工单 ID：${ticket.id}`}
-                                    >
-                                      {previewLine}
-                                    </h3>
-                                    {isSelected && (
-                                      <div className="mt-2 pt-2 border-t border-slate-200/80 bg-slate-50/50 -mx-3 px-3 pb-0.5 rounded-b-md">
-                                        <InboxTicketStatusIcons
-                                          ticket={ticket}
-                                          order={order}
-                                          compact
-                                          className="justify-start pt-0 flex-wrap gap-0.5"
-                                        />
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
+                ) : (
+                  <select
+                    id="inbox-list-shop"
+                    aria-label="收件箱：选择店铺"
+                    title="选择店铺"
+                    className="min-w-0 flex-1 rounded-md border border-slate-200/90 bg-slate-50/90 py-1 pl-1.5 pr-5 text-[11px] text-slate-700 outline-none focus:border-[#F97316] focus:ring-1 focus:ring-orange-200/80"
+                    value={selectedShop ?? ''}
+                    onChange={(e) => setSelectedShop(e.target.value)}
+                  >
+                    {sortedShopsForPlatform.map((shop) => (
+                      <option key={shop} value={shop}>
+                        {shop}（{shopTicketCounts[shop] ?? 0}）
+                      </option>
                     ))}
+                  </select>
+                )}
+
+                <button
+                  type="button"
+                  title={
+                    onReloadList
+                      ? listReloading
+                        ? '正在加载…'
+                        : '重新加载工单列表'
+                      : '演示模式不支持刷新列表'
+                  }
+                  aria-label={onReloadList ? '重新加载工单列表' : '演示模式不支持刷新列表'}
+                  disabled={listReloading || !onReloadList}
+                  onClick={() => onReloadList?.()}
+                  className={cn(
+                    'shrink-0 rounded-md border p-1.5 transition-colors',
+                    listReloading
+                      ? 'cursor-wait border-orange-200/60 bg-orange-50/50 text-[#F97316]'
+                      : onReloadList
+                        ? 'border-slate-200/90 text-slate-500 hover:bg-slate-100 hover:text-[#F97316]'
+                        : 'cursor-not-allowed border-slate-100/90 text-slate-300'
+                  )}
+                >
+                  {listReloading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-[#F97316]" aria-hidden />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
+              <div className="relative flex-1 min-h-0 overflow-y-auto">
+                {shopListLoading ? (
+                  <div
+                    className="pointer-events-none absolute inset-0 z-[1] flex flex-col items-center justify-center gap-2 bg-white/75 backdrop-blur-[1px]"
+                    aria-busy
+                  >
+                    <Loader2 className="h-6 w-6 animate-spin text-[#F97316]" />
+                    <span className="text-[11px] text-slate-500">加载工单…</span>
+                  </div>
+                ) : null}
+
+                {ticketsForSelectedShop.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
+                    <p className="text-xs font-medium text-slate-600">该店铺暂无工单</p>
+                    <p className="mt-1 text-[11px] text-slate-400">请切换店铺或调整筛选</p>
+                  </div>
+                ) : (
+                  <div className="px-2 pt-2 pb-1">
+                    <div className="rounded-lg border border-slate-200/80 bg-slate-50/50 overflow-hidden">
+                      {pagedShopTickets.map((ticket) => {
+                        const order = ticket.orderId ? orders[ticket.orderId] : null;
+                        const previewLine = inboxListPreviewLine(ticket);
+                        const previewTitle = inboxListPreviewTitle(ticket);
+                        const buyerName = customers[ticket.customerId]?.name ?? '买家';
+
+                        const isSelected = selectedTicketId === ticket.id;
+                        const showUnreadDot =
+                          ticket.messageProcessingStatus === 'unread' || ticket.status === TicketStatus.NEW;
+
+                        return (
+                          <div
+                            key={ticket.id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => navigate(`/mailbox/${ticket.id}${mailboxSearchSuffix}`)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                navigate(`/mailbox/${ticket.id}${mailboxSearchSuffix}`);
+                              }
+                            }}
+                            onMouseEnter={() => onTicketHover?.(ticket.id)}
+                            className={cn(
+                              'px-3 py-2.5 cursor-pointer transition-colors relative border-b border-slate-200/70 last:border-b-0',
+                              isSelected
+                                ? 'bg-slate-100/90 hover:bg-slate-100'
+                                : 'bg-white hover:bg-slate-50/90'
+                            )}
+                          >
+                            {isSelected ? (
+                              <div className="absolute left-0 top-2 bottom-2 w-px rounded-full bg-orange-400/90" />
+                            ) : null}
+
+                            <div className={cn('min-w-0', isSelected ? 'pl-2.5' : 'pl-1')}>
+                              <div className="flex min-h-[15px] items-center justify-start gap-1.5">
+                                <span
+                                  className={cn(
+                                    'h-1 w-1 shrink-0 rounded-full',
+                                    showUnreadDot ? 'bg-rose-500/90' : 'bg-transparent'
+                                  )}
+                                  aria-hidden
+                                />
+                                <span
+                                  className="min-w-0 flex-1 truncate text-left text-xs font-bold text-slate-700"
+                                  title={buyerName}
+                                >
+                                  {buyerName}
+                                </span>
+                                <span className="shrink-0 tabular-nums text-[11px] text-slate-500">
+                                  {formatDistanceToNow(new Date(ticket.createdAt), {
+                                    addSuffix: true,
+                                    locale: zhCN,
+                                  })}
+                                </span>
+                              </div>
+                              <h3
+                                className={cn(
+                                  'mt-1 line-clamp-2 text-[13px] leading-snug',
+                                  showUnreadDot
+                                    ? 'font-medium text-slate-800'
+                                    : 'font-normal text-slate-600'
+                                )}
+                                title={`${previewTitle}\n完整工单 ID：${ticket.id}`}
+                              >
+                                {previewLine}
+                              </h3>
+                              {isSelected ? (
+                                <div className="-mx-3 mt-2 rounded-b-md border-t border-slate-200/80 bg-slate-50/50 px-3 pb-0.5 pt-2">
+                                  <InboxTicketStatusIcons
+                                    ticket={ticket}
+                                    order={order}
+                                    compact
+                                    className="justify-start pt-0 flex-wrap gap-0.5"
+                                  />
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
               </div>
-            ))}
+
+              {ticketsForSelectedShop.length > 0 ? (
+                <div className="shrink-0 border-t border-slate-200/80 bg-white px-2 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      disabled={safeShopPage <= 0}
+                      onClick={() => setShopTicketsPage((p) => Math.max(0, p - 1))}
+                      className={cn(
+                        'inline-flex items-center gap-0.5 rounded-lg border px-2 py-1.5 text-[11px] font-medium transition-colors',
+                        safeShopPage <= 0
+                          ? 'cursor-not-allowed border-slate-100 text-slate-300'
+                          : 'border-slate-200/90 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                      )}
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                      上一页
+                    </button>
+                    <span className="tabular-nums text-[11px] text-slate-500">
+                      {safeShopPage + 1} / {shopTotalPages}
+                      <span className="text-slate-300"> · </span>
+                      {ticketsForSelectedShop.length} 条
+                    </span>
+                    <button
+                      type="button"
+                      disabled={safeShopPage >= shopTotalPages - 1}
+                      onClick={() =>
+                        setShopTicketsPage((p) => Math.min(p + 1, Math.max(0, shopTotalPages - 1)))
+                      }
+                      className={cn(
+                        'inline-flex items-center gap-0.5 rounded-lg border px-2 py-1.5 text-[11px] font-medium transition-colors',
+                        safeShopPage >= shopTotalPages - 1
+                          ? 'cursor-not-allowed border-slate-100 text-slate-300'
+                          : 'border-slate-200/90 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                      )}
+                    >
+                      下一页
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
         )}
       </div>
