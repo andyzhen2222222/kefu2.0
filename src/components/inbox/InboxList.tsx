@@ -18,6 +18,7 @@ import { zhCN } from 'date-fns/locale';
 import { InboxTicketStatusIcons } from '@/src/lib/ticketStatusUi';
 import { getTicketSubjectForDisplay } from '@/src/components/settings/TranslationSettingsPage';
 import { platformGroupLabelForTicket } from '@/src/lib/platformLabels';
+import { InboxListPlatformMark } from '@/src/components/inbox/InboxListPlatformMark';
 import { useAuth } from '@/src/hooks/useAuth';
 import {
   intellideskConfigured,
@@ -45,6 +46,9 @@ const ORDER_STATUS_LABEL: Record<string, string> = {
 const INBOX_PREVIEW_MAX = 30;
 /** 左侧工单列表按店铺分页（模拟异步分页加载） */
 const INBOX_SHOP_PAGE_SIZE = 8;
+/** 下拉框「全部」用空字符串，表示不按平台/店铺收窄 */
+const ALL_PLATFORMS = '';
+const ALL_SHOPS = '';
 
 /** 列表第二行：优先展示最近一条买家消息摘要，否则回退主题 */
 function inboxListPreviewLine(ticket: Ticket): string {
@@ -120,8 +124,8 @@ export default function InboxList({
   const [inboxSyncing, setInboxSyncing] = useState(false);
   const [inboxSyncHint, setInboxSyncHint] = useState<string | null>(null);
 
-  const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
-  const [selectedShop, setSelectedShop] = useState<string | null>(null);
+  const [selectedPlatform, setSelectedPlatform] = useState<string>(ALL_PLATFORMS);
+  const [selectedShop, setSelectedShop] = useState<string>(ALL_SHOPS);
   const [shopTicketsPage, setShopTicketsPage] = useState(0);
   const [shopListLoading, setShopListLoading] = useState(false);
 
@@ -292,46 +296,69 @@ export default function InboxList({
   }, [groupedTickets]);
 
   const sortedShopsForPlatform = useMemo(() => {
-    if (!selectedPlatform || !groupedTickets[selectedPlatform]) return [];
+    if (selectedPlatform === ALL_PLATFORMS) {
+      const s = new Set<string>();
+      displayTickets.forEach((t) => {
+        if (t.channelId?.trim()) s.add(t.channelId);
+      });
+      return [...s].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+    }
+    if (!groupedTickets[selectedPlatform]) return [];
     return Object.keys(groupedTickets[selectedPlatform]).sort((a, b) =>
       a.localeCompare(b, 'zh-CN')
     );
-  }, [groupedTickets, selectedPlatform]);
+  }, [displayTickets, groupedTickets, selectedPlatform]);
 
   const shopTicketCounts = useMemo(() => {
-    if (!selectedPlatform || !groupedTickets[selectedPlatform]) return {} as Record<string, number>;
     const m: Record<string, number> = {};
+    if (selectedPlatform === ALL_PLATFORMS) {
+      displayTickets.forEach((t) => {
+        const c = t.channelId?.trim();
+        if (!c) return;
+        m[c] = (m[c] ?? 0) + 1;
+      });
+      return m;
+    }
+    if (!groupedTickets[selectedPlatform]) return m;
     for (const [shop, list] of Object.entries(groupedTickets[selectedPlatform])) {
       m[shop] = list.length;
     }
     return m;
-  }, [groupedTickets, selectedPlatform]);
+  }, [displayTickets, groupedTickets, selectedPlatform]);
+
+  /** 当前平台范围下、尚未按店铺筛选的工单（用于「全部店铺」数量） */
+  const ticketsBeforeShopFilter = useMemo(() => {
+    if (selectedPlatform === ALL_PLATFORMS) return displayTickets;
+    return displayTickets.filter(
+      (t) => platformGroupLabelForTicket(t.platformType, t.channelId) === selectedPlatform
+    );
+  }, [displayTickets, selectedPlatform]);
+
+  const allShopsScopeCount = ticketsBeforeShopFilter.length;
 
   useLayoutEffect(() => {
     if (sortedPlatforms.length === 0) {
-      setSelectedPlatform(null);
-      setSelectedShop(null);
+      setSelectedPlatform(ALL_PLATFORMS);
+      setSelectedShop(ALL_SHOPS);
       return;
     }
-    setSelectedPlatform((prev) => (prev && groupedTickets[prev] ? prev : sortedPlatforms[0]));
+    setSelectedPlatform((prev) => {
+      if (prev === ALL_PLATFORMS) return ALL_PLATFORMS;
+      return groupedTickets[prev] ? prev : ALL_PLATFORMS;
+    });
   }, [groupedTickets, sortedPlatforms]);
 
   useLayoutEffect(() => {
-    if (!selectedPlatform || !groupedTickets[selectedPlatform]) {
-      setSelectedShop(null);
+    if (selectedShop === ALL_SHOPS) return;
+    if (selectedPlatform === ALL_PLATFORMS) {
+      const ok = displayTickets.some((t) => t.channelId === selectedShop);
+      if (!ok) setSelectedShop(ALL_SHOPS);
       return;
     }
-    const sKeys = Object.keys(groupedTickets[selectedPlatform]).sort((a, b) =>
-      a.localeCompare(b, 'zh-CN')
-    );
-    if (sKeys.length === 0) {
-      setSelectedShop(null);
-      return;
+    if (!groupedTickets[selectedPlatform]?.[selectedShop]) {
+      setSelectedShop(ALL_SHOPS);
     }
-    setSelectedShop((prev) =>
-      prev && groupedTickets[selectedPlatform][prev] ? prev : sKeys[0]
-    );
-  }, [groupedTickets, selectedPlatform]);
+  }, [groupedTickets, selectedPlatform, displayTickets, selectedShop]);
 
   useEffect(() => {
     setShopTicketsPage(0);
@@ -339,10 +366,6 @@ export default function InboxList({
 
   const shopLoadingSkipOnce = useRef(true);
   useEffect(() => {
-    if (!selectedShop) {
-      setShopListLoading(false);
-      return;
-    }
     if (shopLoadingSkipOnce.current) {
       shopLoadingSkipOnce.current = false;
       return;
@@ -350,12 +373,20 @@ export default function InboxList({
     setShopListLoading(true);
     const t = window.setTimeout(() => setShopListLoading(false), 240);
     return () => window.clearTimeout(t);
-  }, [selectedShop]);
+  }, [selectedShop, selectedPlatform]);
 
   const ticketsForSelectedShop = useMemo(() => {
-    if (!selectedPlatform || !selectedShop) return [];
-    return groupedTickets[selectedPlatform]?.[selectedShop] ?? [];
-  }, [groupedTickets, selectedPlatform, selectedShop]);
+    const allP = selectedPlatform === ALL_PLATFORMS;
+    const allS = selectedShop === ALL_SHOPS;
+    if (allP && allS) return displayTickets;
+    return displayTickets.filter((t) => {
+      const p = platformGroupLabelForTicket(t.platformType, t.channelId);
+      const shop = t.channelId;
+      if (allP && !allS) return shop === selectedShop;
+      if (!allP && allS) return p === selectedPlatform;
+      return p === selectedPlatform && shop === selectedShop;
+    });
+  }, [displayTickets, selectedPlatform, selectedShop]);
 
   const shopTotalPages = Math.max(1, Math.ceil(ticketsForSelectedShop.length / INBOX_SHOP_PAGE_SIZE));
   const safeShopPage = Math.min(shopTicketsPage, shopTotalPages - 1);
@@ -598,9 +629,15 @@ export default function InboxList({
                   aria-label="收件箱：选择平台"
                   title="选择平台"
                   className="min-w-0 flex-1 rounded-md border border-slate-200/90 bg-slate-50/90 py-1 pl-1.5 pr-5 text-[11px] text-slate-700 outline-none focus:border-[#F97316] focus:ring-1 focus:ring-orange-200/80"
-                  value={selectedPlatform ?? ''}
-                  onChange={(e) => setSelectedPlatform(e.target.value)}
+                  value={selectedPlatform}
+                  onChange={(e) => {
+                    setSelectedPlatform(e.target.value);
+                    setSelectedShop(ALL_SHOPS);
+                  }}
                 >
+                  <option value={ALL_PLATFORMS}>
+                    全部平台（{displayTickets.length}）
+                  </option>
                   {sortedPlatforms.map((platform) => (
                     <option key={platform} value={platform}>
                       {platform}（{platformTicketCounts[platform] ?? 0}）
@@ -624,9 +661,10 @@ export default function InboxList({
                     aria-label="收件箱：选择店铺"
                     title="选择店铺"
                     className="min-w-0 flex-1 rounded-md border border-slate-200/90 bg-slate-50/90 py-1 pl-1.5 pr-5 text-[11px] text-slate-700 outline-none focus:border-[#F97316] focus:ring-1 focus:ring-orange-200/80"
-                    value={selectedShop ?? ''}
+                    value={selectedShop}
                     onChange={(e) => setSelectedShop(e.target.value)}
                   >
+                    <option value={ALL_SHOPS}>全部店铺（{allShopsScopeCount}）</option>
                     {sortedShopsForPlatform.map((shop) => (
                       <option key={shop} value={shop}>
                         {shop}（{shopTicketCounts[shop] ?? 0}）
@@ -679,8 +717,8 @@ export default function InboxList({
 
                 {ticketsForSelectedShop.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
-                    <p className="text-xs font-medium text-slate-600">该店铺暂无工单</p>
-                    <p className="mt-1 text-[11px] text-slate-400">请切换店铺或调整筛选</p>
+                    <p className="text-xs font-medium text-slate-600">当前范围暂无工单</p>
+                    <p className="mt-1 text-[11px] text-slate-400">请切换平台/店铺或调整筛选</p>
                   </div>
                 ) : (
                   <div className="px-2 pt-2 pb-1">
@@ -694,6 +732,10 @@ export default function InboxList({
                         const isSelected = selectedTicketId === ticket.id;
                         const showUnreadDot =
                           ticket.messageProcessingStatus === 'unread' || ticket.status === TicketStatus.NEW;
+                        const platformMark = platformGroupLabelForTicket(
+                          ticket.platformType,
+                          ticket.channelId
+                        );
 
                         return (
                           <div
@@ -728,6 +770,9 @@ export default function InboxList({
                                   )}
                                   aria-hidden
                                 />
+                                <span className="pointer-events-none shrink-0" aria-hidden>
+                                  <InboxListPlatformMark platformLabel={platformMark} />
+                                </span>
                                 <span
                                   className="min-w-0 flex-1 truncate text-left text-xs font-bold text-slate-700"
                                   title={buyerName}
@@ -743,7 +788,7 @@ export default function InboxList({
                               </div>
                               <h3
                                 className={cn(
-                                  'mt-1 line-clamp-2 text-[13px] leading-snug',
+                                  'mt-1 line-clamp-2 text-left text-[13px] leading-snug',
                                   showUnreadDot
                                     ? 'font-medium text-slate-800'
                                     : 'font-normal text-slate-600'
