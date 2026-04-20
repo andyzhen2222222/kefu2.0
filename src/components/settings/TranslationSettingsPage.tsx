@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { Navigate } from 'react-router-dom';
 import { Languages, Sparkles, Info, Search, ChevronDown, Check } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import type { Ticket } from '@/src/types';
-import { useAuth } from '@/src/hooks/useAuth';
-import { getDefaultSettingsPath } from './settingsNavConfig';
+import { useMembershipTier } from '@/src/lib/membership';
+import { LockedFeatureNotice, MemberOnlyBadge } from '@/src/components/membership/MemberUi';
 
 const STORAGE_KEY = 'edesk_translation_settings_v1';
 
@@ -254,8 +253,8 @@ function ToggleRow({
   return (
     <button
       type="button"
-      role="switch"
-      aria-checked={on}
+      aria-label={title}
+      title={title}
       disabled={disabled}
       onClick={onToggle}
       className={cn(
@@ -286,8 +285,8 @@ function ToggleRow({
 }
 
 export default function TranslationSettingsPage() {
-  const { user } = useAuth();
   const [settings, setSettings] = useState<TranslationSettingsState>(loadSettings);
+  const { isMember } = useMembershipTier();
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
@@ -296,16 +295,15 @@ export default function TranslationSettingsPage() {
   const patch = (partial: Partial<TranslationSettingsState>) =>
     setSettings((s) => ({ ...s, ...partial }));
 
-  if (user?.role !== 'admin') {
-    return <Navigate to={getDefaultSettingsPath(user?.role)} replace />;
-  }
-
   return (
     <div className="flex flex-1 flex-col min-h-0 min-w-0 bg-slate-50">
       <div className="flex flex-col flex-1 min-h-0 max-w-5xl mx-auto w-full px-5 py-4 gap-2">
         <header className="flex items-center justify-between gap-3 shrink-0">
           <div className="min-w-0">
-            <h1 className="text-lg font-bold text-slate-900 tracking-tight">智能翻译</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold text-slate-900 tracking-tight">智能翻译</h1>
+              {!isMember ? <MemberOnlyBadge /> : null}
+            </div>
             <p className="text-[11px] text-slate-500 mt-0.5">店铺语种、积分在母系统查看。</p>
           </div>
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600 shrink-0">
@@ -314,6 +312,12 @@ export default function TranslationSettingsPage() {
         </header>
 
         <div className="flex flex-1 min-h-0 flex-col gap-3 overflow-y-auto">
+          {!isMember ? (
+            <LockedFeatureNotice
+              title="翻译配置仅会员可用"
+              description="非会员仍可查看翻译配置界面与能力说明，但无法修改翻译开关、目标语言或发送前自动翻译。"
+            />
+          ) : null}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
             <section className="flex flex-col rounded-xl border bg-white shadow-sm w-full border-slate-200">
               <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 shrink-0 bg-slate-50/50 rounded-t-xl">
@@ -335,12 +339,14 @@ export default function TranslationSettingsPage() {
                         <span className="text-sm font-semibold text-slate-900">自动翻译买家消息</span>
                         <button
                           type="button"
-                          role="switch"
-                          aria-checked={settings.inboundTranslateEnabled}
+                          aria-label="自动翻译买家消息"
+                          title="自动翻译买家消息"
+                          disabled={!isMember}
                           onClick={() => patch({ inboundTranslateEnabled: !settings.inboundTranslateEnabled })}
                           className={cn(
                             'shrink-0 h-6 w-11 rounded-full p-0.5 transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-orange-500',
-                            settings.inboundTranslateEnabled ? 'bg-[#F97316]' : 'bg-slate-200'
+                            settings.inboundTranslateEnabled ? 'bg-[#F97316]' : 'bg-slate-200',
+                            !isMember && 'cursor-not-allowed opacity-60'
                           )}
                         >
                           <span
@@ -364,9 +370,12 @@ export default function TranslationSettingsPage() {
                         <SearchableLanguageSelect
                           value={settings.inboundTargetLang}
                           onChange={(val) => patch({ inboundTargetLang: val })}
-                          disabled={!settings.inboundTranslateEnabled}
+                          disabled={!isMember || !settings.inboundTranslateEnabled}
                         />
                       </div>
+                      {!isMember ? (
+                        <p className="text-[11px] text-amber-700">当前为非会员，翻译配置仅展示不可修改。</p>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -383,9 +392,13 @@ export default function TranslationSettingsPage() {
                 <ToggleRow
                   on={settings.outboundTranslateOnSend}
                   onToggle={() => patch({ outboundTranslateOnSend: !settings.outboundTranslateOnSend })}
+                  disabled={!isMember}
                   title="发送前译为平台语"
                   subtitle="计翻译积分。"
                 />
+                {!isMember ? (
+                  <p className="text-[11px] text-amber-700">开通会员后，才可启用发送前自动翻译并实际生效。</p>
+                ) : null}
               </div>
             </section>
           </div>

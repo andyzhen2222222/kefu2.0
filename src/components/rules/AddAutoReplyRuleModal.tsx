@@ -4,11 +4,14 @@ import { cn } from '@/src/lib/utils';
 import { MOCK_TEMPLATES } from '@/src/data/demoTemplates';
 import { DEMO_KB_SNIPPETS_FOR_IMPORT } from '@/src/data/demoKnowledgeSnippets';
 import { ROUTING_AFTER_SALES_TYPE_OPTIONS } from '@/src/lib/routingRuleOptions';
+import type { AutoReplyConditionsV1 } from '@/src/lib/autoReplyConditions';
+import { isAutoReplyConditionsV1 } from '@/src/lib/autoReplyConditions';
 import type { ApiAutoReplyRuleRow } from '@/src/services/intellideskApi';
 
 export type NewAutoReplyRulePayload = {
   name: string;
-  intentMatch: string | null;
+  conditionsJson: AutoReplyConditionsV1;
+  intentMatch: null;
   keywords: string[];
   replyContent: string;
   markRepliedOnSend: boolean;
@@ -25,13 +28,6 @@ interface AddAutoReplyRuleModalProps {
   submitting?: boolean;
 }
 
-function isLegacyIntentRule(rule: ApiAutoReplyRuleRow): boolean {
-  const im = rule.intentMatch?.trim() ?? '';
-  if (!im) return false;
-  if (im.startsWith('__time__:') || im.startsWith('__after_sales_type__:')) return false;
-  return !(rule.keywords?.length);
-}
-
 function appendToReply(prev: string, chunk: string) {
   const t = chunk.trim();
   if (!t) return prev;
@@ -46,7 +42,11 @@ export default function AddAutoReplyRuleModal({
   submitting = false,
 }: AddAutoReplyRuleModalProps) {
   const [ruleName, setRuleName] = useState('');
-  const [triggerType, setTriggerType] = useState('time');
+  const [combineMode, setCombineMode] = useState<'and' | 'or'>('and');
+  const [timeEnabled, setTimeEnabled] = useState(true);
+  const [kwEnabled, setKwEnabled] = useState(false);
+  const [asEnabled, setAsEnabled] = useState(false);
+  const [legacyEnabled, setLegacyEnabled] = useState(false);
   const [templateContent, setTemplateContent] = useState('');
   const [keywordsText, setKeywordsText] = useState('');
   const [timePreset, setTimePreset] = useState('weekend');
@@ -95,19 +95,48 @@ export default function AddAutoReplyRuleModal({
       setRuleName(initialRule.name);
       setTemplateContent(initialRule.replyContent ?? '');
       setMarkReplied(initialRule.markRepliedOnSend);
+      const cj = initialRule.conditionsJson;
+      if (cj != null && isAutoReplyConditionsV1(cj)) {
+        setCombineMode(cj.combine);
+        setTimeEnabled(Boolean(cj.time?.preset));
+        if (cj.time?.preset) {
+          setTimePreset(
+            ['weekend', 'weekday', 'daily'].includes(cj.time.preset) ? cj.time.preset : 'weekend'
+          );
+          setTimeStart(cj.time.start || '18:00');
+          setTimeEnd(cj.time.end || '09:00');
+        } else {
+          setTimePreset('weekend');
+          setTimeStart('18:00');
+          setTimeEnd('09:00');
+        }
+        setKwEnabled(Boolean(cj.keywords?.length));
+        setKeywordsText((cj.keywords ?? []).join(', '));
+        setAsEnabled(Boolean(cj.afterSalesType?.trim()));
+        if (cj.afterSalesType?.trim()) {
+          const v = cj.afterSalesType.trim();
+          const valid = ROUTING_AFTER_SALES_TYPE_OPTIONS.some((o) => o.value === v);
+          setAfterSalesTypeKey(valid ? v : ROUTING_AFTER_SALES_TYPE_OPTIONS[0].value);
+        } else {
+          setAfterSalesTypeKey('logistics');
+        }
+        const leg = cj.legacyIntent?.trim() ?? '';
+        setLegacyEnabled(Boolean(leg));
+        setLegacyIntentText(leg);
+        setHadLegacySource(Boolean(leg));
+        return;
+      }
       const kws = initialRule.keywords ?? [];
       const im = initialRule.intentMatch ?? '';
-      if (kws.length > 0) {
-        setTriggerType('keyword');
-        setKeywordsText(kws.join(', '));
-        setTimePreset('weekend');
-        setTimeStart('18:00');
-        setTimeEnd('09:00');
-        setAfterSalesTypeKey('logistics');
-        setHadLegacySource(false);
-        setLegacyIntentText('');
-      } else if (im.startsWith('__time__:')) {
-        setTriggerType('time');
+      const plainIntent =
+        im.trim() &&
+        !im.startsWith('__time__:') &&
+        !im.startsWith('__after_sales_type__:')
+          ? im.trim()
+          : '';
+      setCombineMode('and');
+      setTimeEnabled(im.startsWith('__time__:'));
+      if (im.startsWith('__time__:')) {
         const rest = im.slice('__time__:'.length);
         const idx = rest.indexOf(':');
         const preset = idx === -1 ? rest : rest.slice(0, idx);
@@ -116,35 +145,31 @@ export default function AddAutoReplyRuleModal({
         const [ts, te] = times.split('-');
         setTimeStart(ts?.trim() || '18:00');
         setTimeEnd(te?.trim() || '09:00');
-        setKeywordsText('');
-        setHadLegacySource(false);
-        setLegacyIntentText('');
-      } else if (im.startsWith('__after_sales_type__:')) {
-        setTriggerType('after_sales_type');
-        const v = im.slice('__after_sales_type__:'.length);
-        const valid = ROUTING_AFTER_SALES_TYPE_OPTIONS.some((o) => o.value === v);
-        setAfterSalesTypeKey(valid ? v : ROUTING_AFTER_SALES_TYPE_OPTIONS[0].value);
-        setKeywordsText('');
-        setHadLegacySource(false);
-        setLegacyIntentText('');
-      } else if (im.trim()) {
-        setTriggerType('legacy_intent');
-        setLegacyIntentText(im.trim());
-        setHadLegacySource(isLegacyIntentRule(initialRule));
-        setKeywordsText('');
       } else {
-        setTriggerType('time');
         setTimePreset('weekend');
         setTimeStart('18:00');
         setTimeEnd('09:00');
-        setKeywordsText('');
-        setAfterSalesTypeKey('logistics');
-        setHadLegacySource(false);
-        setLegacyIntentText('');
       }
+      setKwEnabled(kws.length > 0);
+      setKeywordsText(kws.join(', '));
+      setAsEnabled(im.startsWith('__after_sales_type__:'));
+      if (im.startsWith('__after_sales_type__:')) {
+        const v = im.slice('__after_sales_type__:'.length);
+        const valid = ROUTING_AFTER_SALES_TYPE_OPTIONS.some((o) => o.value === v);
+        setAfterSalesTypeKey(valid ? v : ROUTING_AFTER_SALES_TYPE_OPTIONS[0].value);
+      } else {
+        setAfterSalesTypeKey('logistics');
+      }
+      setLegacyEnabled(Boolean(plainIntent));
+      setLegacyIntentText(plainIntent);
+      setHadLegacySource(Boolean(plainIntent));
     } else {
       setRuleName('');
-      setTriggerType('time');
+      setCombineMode('and');
+      setTimeEnabled(true);
+      setKwEnabled(false);
+      setAsEnabled(false);
+      setLegacyEnabled(false);
       setTemplateContent('');
       setKeywordsText('');
       setTimePreset('weekend');
@@ -164,30 +189,46 @@ export default function AddAutoReplyRuleModal({
       window.alert('请填写自动回复正文');
       return;
     }
-    if (triggerType === 'legacy_intent' && !legacyIntentText.trim()) {
-      window.alert('请填写意图标签');
+    const parsedKeywords = keywordsText
+      .split(/[,，]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (kwEnabled && parsedKeywords.length === 0) {
+      window.alert('已启用「包含关键字」时，请至少填写一个关键词');
       return;
     }
-    let intentMatch: string | null = null;
-    let keywords: string[] = [];
-    if (triggerType === 'time') {
-      intentMatch = `__time__:${timePreset}:${timeStart}-${timeEnd}`;
-    } else if (triggerType === 'keyword') {
-      keywords = keywordsText
-        .split(/[,，]/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-    } else if (triggerType === 'after_sales_type') {
-      intentMatch = `__after_sales_type__:${afterSalesTypeKey}`;
-    } else if (triggerType === 'legacy_intent') {
-      intentMatch = legacyIntentText.trim() || null;
-      keywords = [];
+    if (legacyEnabled && !legacyIntentText.trim()) {
+      window.alert('已启用「意图直配（旧）」时，请填写工单意图标签');
+      return;
+    }
+    let activeCount = 0;
+    if (timeEnabled) activeCount += 1;
+    if (kwEnabled) activeCount += 1;
+    if (asEnabled) activeCount += 1;
+    if (legacyEnabled) activeCount += 1;
+    if (activeCount === 0) {
+      window.alert('请至少启用一项触发条件（时间段、关键字、售后类型或旧版意图）');
+      return;
+    }
+    const conditionsJson: AutoReplyConditionsV1 = { v: 1, combine: combineMode };
+    if (timeEnabled) {
+      conditionsJson.time = { preset: timePreset, start: timeStart, end: timeEnd };
+    }
+    if (kwEnabled && parsedKeywords.length) {
+      conditionsJson.keywords = parsedKeywords;
+    }
+    if (asEnabled) {
+      conditionsJson.afterSalesType = afterSalesTypeKey;
+    }
+    if (legacyEnabled && legacyIntentText.trim()) {
+      conditionsJson.legacyIntent = legacyIntentText.trim();
     }
     if (onSubmit) {
       await onSubmit({
         name,
-        intentMatch,
-        keywords,
+        conditionsJson,
+        intentMatch: null,
+        keywords: [],
         replyContent: templateContent,
         markRepliedOnSend: markReplied,
         ruleId: initialRule?.id,
@@ -199,7 +240,7 @@ export default function AddAutoReplyRuleModal({
   if (!isOpen) return null;
 
   const isEdit = Boolean(initialRule);
-  const showLegacyTab = hadLegacySource;
+  const showLegacyBlock = isEdit && hadLegacySource;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
@@ -231,170 +272,195 @@ export default function AddAutoReplyRuleModal({
             </div>
 
             <div className="space-y-3">
-              <label className="text-sm font-bold text-slate-700">触发条件</label>
-              <div
-                className={cn(
-                  'grid gap-3',
-                  showLegacyTab ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'
-                )}
-              >
-                <button
-                  type="button"
-                  onClick={() => setTriggerType('time')}
-                  className={cn(
-                    'flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all',
-                    triggerType === 'time'
-                      ? 'border-[#F97316] bg-orange-50/50 text-[#F97316]'
-                      : 'border-slate-200 hover:border-slate-300 text-slate-600'
-                  )}
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <label className="text-sm font-bold text-slate-700">触发条件</label>
+                <div
+                  className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 text-xs font-medium"
+                  role="group"
+                  aria-label="多条件组合方式"
                 >
-                  <Clock className="w-6 h-6" />
-                  <span className="text-sm font-medium">特定时间段</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTriggerType('keyword')}
-                  className={cn(
-                    'flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all',
-                    triggerType === 'keyword'
-                      ? 'border-[#F97316] bg-orange-50/50 text-[#F97316]'
-                      : 'border-slate-200 hover:border-slate-300 text-slate-600'
-                  )}
-                >
-                  <Tag className="w-6 h-6" />
-                  <span className="text-sm font-medium">包含关键字</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTriggerType('after_sales_type')}
-                  className={cn(
-                    'flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all',
-                    triggerType === 'after_sales_type'
-                      ? 'border-[#F97316] bg-orange-50/50 text-[#F97316]'
-                      : 'border-slate-200 hover:border-slate-300 text-slate-600'
-                  )}
-                >
-                  <ShoppingBag className="w-6 h-6" />
-                  <span className="text-sm font-medium">售后类型</span>
-                </button>
-                {showLegacyTab && (
                   <button
                     type="button"
-                    onClick={() => setTriggerType('legacy_intent')}
+                    onClick={() => setCombineMode('and')}
                     className={cn(
-                      'flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all',
-                      triggerType === 'legacy_intent'
-                        ? 'border-[#F97316] bg-orange-50/50 text-[#F97316]'
-                        : 'border-slate-200 hover:border-slate-300 text-slate-600'
+                      'px-3 py-1.5 rounded-md transition-colors',
+                      combineMode === 'and'
+                        ? 'bg-white text-[#F97316] shadow-sm'
+                        : 'text-slate-600 hover:text-slate-800'
                     )}
                   >
-                    <FileText className="w-6 h-6" />
-                    <span className="text-sm font-medium text-center leading-tight">意图直配（旧）</span>
+                    全部满足（且）
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setCombineMode('or')}
+                    className={cn(
+                      'px-3 py-1.5 rounded-md transition-colors',
+                      combineMode === 'or'
+                        ? 'bg-white text-[#F97316] shadow-sm'
+                        : 'text-slate-600 hover:text-slate-800'
+                    )}
+                  >
+                    满足任一（或）
+                  </button>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500 leading-relaxed -mt-1">
+                可同时勾选多项；「且」表示<strong>已勾选</strong>的维度都要成立才触发，「或」表示<strong>已勾选</strong>的维度任一条成立即触发。关键字维度内仍为<strong>任一关键词子串命中</strong>即算该维度成立。
+              </p>
+
+              <div className="space-y-2 rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+                <label className="flex items-start gap-3 p-3 bg-white cursor-pointer hover:bg-slate-50/80">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 w-4 h-4 rounded border-slate-300 text-[#F97316] focus:ring-[#F97316]"
+                    checked={timeEnabled}
+                    onChange={(e) => setTimeEnabled(e.target.checked)}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                      <Clock className="w-4 h-4 text-slate-500 shrink-0" />
+                      特定时间段
+                    </div>
+                    {timeEnabled && (
+                      <div className="mt-3 p-3 bg-slate-50 rounded-lg border border-slate-100 space-y-3 animate-in fade-in">
+                        <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                          <div className="flex-1 space-y-1">
+                            <span className="text-xs font-medium text-slate-500">生效周期</span>
+                            <select
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
+                              value={timePreset}
+                              onChange={(e) => setTimePreset(e.target.value)}
+                            >
+                              <option value="weekend">周末 (周六、周日)</option>
+                              <option value="weekday">工作日 (周一至周五)</option>
+                              <option value="daily">每天</option>
+                            </select>
+                          </div>
+                          <div className="flex-1 space-y-1">
+                            <span className="text-xs font-medium text-slate-500">时间段</span>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="time"
+                                value={timeStart}
+                                onChange={(e) => setTimeStart(e.target.value)}
+                                className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
+                              />
+                              <span className="text-slate-400">-</span>
+                              <input
+                                type="time"
+                                value={timeEnd}
+                                onChange={(e) => setTimeEnd(e.target.value)}
+                                className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 p-3 bg-white cursor-pointer hover:bg-slate-50/80">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 w-4 h-4 rounded border-slate-300 text-[#F97316] focus:ring-[#F97316]"
+                    checked={kwEnabled}
+                    onChange={(e) => setKwEnabled(e.target.checked)}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                      <Tag className="w-4 h-4 text-slate-500 shrink-0" />
+                      包含关键字
+                    </div>
+                    {kwEnabled && (
+                      <div className="mt-3 space-y-1 animate-in fade-in">
+                        <span className="text-xs font-medium text-slate-500">
+                          关键字 (多个用逗号分隔)
+                        </span>
+                        <input
+                          type="text"
+                          placeholder="例如：refund, 退款, remboursement"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
+                          value={keywordsText}
+                          onChange={(e) => setKeywordsText(e.target.value)}
+                        />
+                        <p className="text-[11px] text-slate-500 leading-relaxed">
+                          对买家消息做<strong>子串匹配</strong>（不区分大小写），非整句语义。类目命中请配合「售后类型」。
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 p-3 bg-white cursor-pointer hover:bg-slate-50/80">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 w-4 h-4 rounded border-slate-300 text-[#F97316] focus:ring-[#F97316]"
+                    checked={asEnabled}
+                    onChange={(e) => setAsEnabled(e.target.checked)}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                      <ShoppingBag className="w-4 h-4 text-slate-500 shrink-0" />
+                      售后类型
+                    </div>
+                    {asEnabled && (
+                      <div className="mt-3 space-y-1 animate-in fade-in">
+                        <select
+                          aria-label="售后类型"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
+                          value={afterSalesTypeKey}
+                          onChange={(e) => setAfterSalesTypeKey(e.target.value)}
+                        >
+                          {ROUTING_AFTER_SALES_TYPE_OPTIONS.map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">
+                          与分配规则字典一致；依赖工单上 AI 归类后的意图标签。
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </label>
+
+                {showLegacyBlock && (
+                  <label className="flex items-start gap-3 p-3 bg-white cursor-pointer hover:bg-slate-50/80">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 w-4 h-4 rounded border-slate-300 text-[#F97316] focus:ring-[#F97316]"
+                      checked={legacyEnabled}
+                      onChange={(e) => setLegacyEnabled(e.target.checked)}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                        <FileText className="w-4 h-4 text-slate-500 shrink-0" />
+                        意图直配（旧）
+                      </div>
+                      {legacyEnabled && (
+                        <div className="mt-3 space-y-1 animate-in fade-in">
+                          <span className="text-xs font-medium text-slate-500">
+                            工单意图标签（须与 AI 归类逐字一致）
+                          </span>
+                          <input
+                            type="text"
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
+                            value={legacyIntentText}
+                            onChange={(e) => setLegacyIntentText(e.target.value)}
+                            placeholder="例如：物流查询"
+                          />
+                          <p className="text-[11px] text-slate-500 leading-relaxed">
+                            仅用于兼容历史规则；新建请优先用「售后类型」。
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </label>
                 )}
               </div>
-
-              {triggerType === 'time' && (
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-4 mt-2 animate-in fade-in">
-                  <div className="flex flex-col sm:flex-row sm:items-end gap-4">
-                    <div className="flex-1 space-y-1">
-                      <label className="text-xs font-medium text-slate-500">生效周期</label>
-                      <select
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
-                        value={timePreset}
-                        onChange={(e) => setTimePreset(e.target.value)}
-                      >
-                        <option value="weekend">周末 (周六、周日)</option>
-                        <option value="weekday">工作日 (周一至周五)</option>
-                        <option value="daily">每天</option>
-                      </select>
-                    </div>
-                    <div className="flex-1 space-y-1">
-                      <label className="text-xs font-medium text-slate-500">时间段</label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="time"
-                          value={timeStart}
-                          onChange={(e) => setTimeStart(e.target.value)}
-                          className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
-                        />
-                        <span className="text-slate-400">-</span>
-                        <input
-                          type="time"
-                          value={timeEnd}
-                          onChange={(e) => setTimeEnd(e.target.value)}
-                          className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {triggerType === 'keyword' && (
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-4 mt-2 animate-in fade-in">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-500">
-                      关键字 (多个关键字用逗号分隔)
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="例如：refund, 退款, remboursement"
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
-                      value={keywordsText}
-                      onChange={(e) => setKeywordsText(e.target.value)}
-                    />
-                    <p className="text-[11px] text-slate-500 leading-relaxed">
-                      匹配方式：对买家消息做<strong>子串匹配</strong>（不区分大小写），<strong>不是</strong>整句语义理解，也<strong>不是</strong>整词精确匹配。
-                      各平台语言不同可并列多条关键词（中/英/德等），例如：
-                      <span className="font-mono text-slate-600"> refund,退款,remboursement </span>
-                      。需要按业务类目命中时，请优先用「售后类型」（依赖工单上已归类的意图标签）。
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {triggerType === 'after_sales_type' && (
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-4 mt-2 animate-in fade-in">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-500">售后类型</label>
-                    <select
-                      aria-label="售后类型"
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
-                      value={afterSalesTypeKey}
-                      onChange={(e) => setAfterSalesTypeKey(e.target.value)}
-                    >
-                      {ROUTING_AFTER_SALES_TYPE_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                    <p className="text-[11px] text-slate-500 leading-relaxed">
-                      与「分配规则 / 字段管理」中的售后类型字典一致。命中条件为：工单上由 AI
-                      归类后的<strong>意图标签</strong>（中文）属于该类型对应范围；若尚未跑意图分类，请先同步或刷新工单意图后再试。
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {triggerType === 'legacy_intent' && (
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-4 mt-2 animate-in fade-in">
-                  <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-500">工单意图标签（须与 AI 归类结果逐字一致）</label>
-                    <input
-                      type="text"
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none focus:border-[#F97316]"
-                      value={legacyIntentText}
-                      onChange={(e) => setLegacyIntentText(e.target.value)}
-                      placeholder="例如：物流查询"
-                    />
-                    <p className="text-[11px] text-slate-500 leading-relaxed">
-                      为兼容早期规则保留。新建规则请优先使用「售后类型」。
-                    </p>
-                  </div>
-                </div>
-              )}
             </div>
 
             <div className="space-y-3">

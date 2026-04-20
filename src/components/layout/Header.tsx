@@ -3,6 +3,8 @@ import { useAuth } from '@/src/hooks/useAuth';
 import { cn } from '@/src/lib/utils';
 import { Store, CreditCard, LogOut } from 'lucide-react';
 import { NezhaLogo } from '@/src/components/ui/NezhaLogo';
+import { useMembershipTier } from '@/src/lib/membership';
+import { MembershipStatusPill } from '@/src/components/membership/MemberUi';
 
 const mainNavItems = [
   { label: '订单', href: 'https://tiaojia.nezhachuhai.com/dashboard/analyzeOrder/platformOrderDetail' },
@@ -15,6 +17,8 @@ const mainNavItems = [
 
 export default function Header() {
   const { user, logout } = useAuth();
+  const { isMember, setTier } = useMembershipTier();
+  const showTierToggle = Boolean(import.meta.env.DEV);
 
   return (
     <header className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 sticky top-0 z-50">
@@ -45,6 +49,19 @@ export default function Header() {
 
       {/* Right Actions */}
       <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <MembershipStatusPill isMember={isMember} />
+          {showTierToggle ? (
+            <button
+              type="button"
+              onClick={() => setTier(isMember ? 'free' : 'member')}
+              className="rounded-md border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
+              title="仅本地预览切换，不影响真实账号"
+            >
+              {isMember ? '切到非会员' : '切到会员'}
+            </button>
+          ) : null}
+        </div>
         <a
           href="https://tiaojia.nezhachuhai.com/authorization"
           className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-50 rounded-md transition-colors"

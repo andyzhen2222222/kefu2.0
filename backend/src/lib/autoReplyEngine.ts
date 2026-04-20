@@ -8,50 +8,8 @@ import {
   parseAfterSalesTypeFromIntentMatch,
   ticketIntentMatchesAfterSalesType,
 } from './autoReplyAfterSalesMatch.js';
-
-/**
- * 解析 intentMatch 时间段：`__time__:weekend:18:00-09:00`（时间部分含冒号，不能整串 split(':')）
- */
-function parseTimeIntentMatch(intentMatch: string): { preset: string; timeRange: string } | null {
-  const prefix = '__time__:';
-  if (!intentMatch.startsWith(prefix)) return null;
-  const rest = intentMatch.slice(prefix.length);
-  const idx = rest.indexOf(':');
-  if (idx === -1) return { preset: rest, timeRange: '' };
-  return { preset: rest.slice(0, idx), timeRange: rest.slice(idx + 1) };
-}
-
-/**
- * 检查当前时间是否在指定周期 + 时段内（时段为空则周期内全天）
- */
-function isNowInTimeRange(preset: string, timeRange: string): boolean {
-  const now = new Date();
-  const day = now.getDay();
-
-  if (preset === 'weekend') {
-    if (day !== 0 && day !== 6) return false;
-  } else if (preset === 'weekday') {
-    if (day === 0 || day === 6) return false;
-  }
-
-  if (!timeRange.trim()) return true;
-
-  const [start, end] = timeRange.split('-');
-  if (!start?.trim() || !end?.trim()) return true;
-
-  const [sH, sM] = start.split(':').map(Number);
-  const [eH, eM] = end.split(':').map(Number);
-  if (!Number.isFinite(sH) || !Number.isFinite(eH)) return true;
-
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
-  const startMinutes = sH * 60 + (sM || 0);
-  const endMinutes = eH * 60 + (eM || 0);
-
-  if (startMinutes <= endMinutes) {
-    return nowMinutes >= startMinutes && nowMinutes <= endMinutes;
-  }
-  return nowMinutes >= startMinutes || nowMinutes <= endMinutes;
-}
+import { parseTimeIntentMatch, isNowInTimeRange } from './autoReplyTime.js';
+import { evaluateAutoReplyConditions, isAutoReplyConditionsV1 } from './autoReplyConditions.js';
 
 /**
  * 母系统入站消息写入后：按租户规则尝试自动回复并发往哪吒会话。
@@ -85,23 +43,28 @@ export async function triggerAutoReplyIfNeeded(
   for (const rule of rules) {
     let matched = false;
 
-    if (rule.keywords.length > 0) {
-      const lower = messageContent.toLowerCase();
-      if (rule.keywords.some((kw) => lower.includes(String(kw).toLowerCase()))) {
-        matched = true;
-      }
-    }
-
-    if (!matched && rule.intentMatch) {
-      const timeParsed = parseTimeIntentMatch(rule.intentMatch);
-      if (timeParsed) {
-        if (isNowInTimeRange(timeParsed.preset, timeParsed.timeRange)) matched = true;
-      } else {
-        const asType = parseAfterSalesTypeFromIntentMatch(rule.intentMatch);
-        if (asType) {
-          if (ticketIntentMatchesAfterSalesType(intentTrim, asType)) matched = true;
-        } else if (intentTrim && rule.intentMatch.trim() === intentTrim) {
+    const rawJson = rule.conditionsJson;
+    if (rawJson != null && isAutoReplyConditionsV1(rawJson)) {
+      matched = evaluateAutoReplyConditions(rawJson, { messageContent, ticketIntent: intentTrim });
+    } else {
+      if (rule.keywords.length > 0) {
+        const lower = messageContent.toLowerCase();
+        if (rule.keywords.some((kw) => lower.includes(String(kw).toLowerCase()))) {
           matched = true;
+        }
+      }
+
+      if (!matched && rule.intentMatch) {
+        const timeParsed = parseTimeIntentMatch(rule.intentMatch);
+        if (timeParsed) {
+          if (isNowInTimeRange(timeParsed.preset, timeParsed.timeRange)) matched = true;
+        } else {
+          const asType = parseAfterSalesTypeFromIntentMatch(rule.intentMatch);
+          if (asType) {
+            if (ticketIntentMatchesAfterSalesType(intentTrim, asType)) matched = true;
+          } else if (intentTrim && rule.intentMatch.trim() === intentTrim) {
+            matched = true;
+          }
         }
       }
     }

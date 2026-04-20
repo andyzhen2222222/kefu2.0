@@ -426,6 +426,29 @@ router.delete('/sla-rules/:id', requireRoles(UserRole.admin), async (req: Tenant
   res.status(204).send();
 });
 
+function normalizeAutoReplyRuleWrite(data: {
+  conditionsJson?: unknown;
+  intentMatch?: string | null;
+  keywords?: string[];
+}): { intentMatch?: string | null; keywords: string[]; conditionsJson?: object | null } {
+  const cj = data.conditionsJson;
+  if (cj != null && typeof cj === 'object' && !Array.isArray(cj)) {
+    const o = cj as Record<string, unknown>;
+    if (o.v === 1 && (o.combine === 'and' || o.combine === 'or')) {
+      return {
+        intentMatch: null,
+        keywords: [],
+        conditionsJson: cj as object,
+      };
+    }
+  }
+  return {
+    intentMatch: data.intentMatch ?? undefined,
+    keywords: data.keywords ?? [],
+    conditionsJson: undefined,
+  };
+}
+
 // --- Auto reply rules ---
 router.get('/auto-reply-rules', async (req: TenantRequest, res) => {
   const rows = await prisma.autoReplyRule.findMany({ where: { tenantId: req.tenantId! } });
@@ -444,20 +467,23 @@ router.post(
         keywords: z.array(z.string()).optional(),
         replyContent: z.string().nullable().optional(),
         markRepliedOnSend: z.boolean().optional(),
+        conditionsJson: z.unknown().optional(),
       })
       .safeParse(req.body);
     if (!b.success) {
       res.status(400).json({ error: 'bad_request', message: b.error.flatten().toString() });
       return;
     }
+    const norm = normalizeAutoReplyRuleWrite(b.data);
     const row = await prisma.autoReplyRule.create({
       data: {
         id: randomUUID(),
         tenantId: req.tenantId!,
         name: b.data.name,
         enabled: b.data.enabled ?? true,
-        intentMatch: b.data.intentMatch ?? undefined,
-        keywords: b.data.keywords ?? [],
+        intentMatch: norm.intentMatch ?? undefined,
+        keywords: norm.keywords,
+        conditionsJson: norm.conditionsJson ?? undefined,
         replyContent: b.data.replyContent ?? undefined,
         markRepliedOnSend: b.data.markRepliedOnSend ?? false,
       },
@@ -478,15 +504,29 @@ router.patch(
         keywords: z.array(z.string()).optional(),
         replyContent: z.string().nullable().optional(),
         markRepliedOnSend: z.boolean().optional(),
+        conditionsJson: z.unknown().optional(),
       })
       .safeParse(req.body);
     if (!b.success) {
       res.status(400).json({ error: 'bad_request', message: b.error.flatten().toString() });
       return;
     }
+    const patch: Record<string, unknown> = { ...b.data };
+    if (Object.prototype.hasOwnProperty.call(b.data, 'conditionsJson')) {
+      const norm = normalizeAutoReplyRuleWrite({
+        conditionsJson: b.data.conditionsJson,
+        intentMatch: b.data.intentMatch,
+        keywords: b.data.keywords,
+      });
+      patch.intentMatch = norm.intentMatch ?? null;
+      patch.keywords = norm.keywords;
+      if (norm.conditionsJson !== undefined) {
+        patch.conditionsJson = norm.conditionsJson;
+      }
+    }
     const u = await prisma.autoReplyRule.updateMany({
       where: { id: req.params.id, tenantId: req.tenantId! },
-      data: b.data as object,
+      data: patch as object,
     });
     if (u.count === 0) {
       res.status(404).json({ error: 'not_found', message: 'Not found' });

@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, RefreshCw, Check, Loader2, Sparkles, Languages } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
+import { MemberOnlyBadge } from '@/src/components/membership/MemberUi';
 
 interface AiSuggestionModalProps {
   isOpen: boolean;
@@ -9,6 +10,7 @@ interface AiSuggestionModalProps {
   suggestion: { suggestion: string; platformSuggestion?: string } | null;
   onAdopt: (text: string) => void;
   onRefresh: () => void;
+  isMember?: boolean;
 }
 
 export default function AiSuggestionModal({
@@ -18,6 +20,7 @@ export default function AiSuggestionModal({
   suggestion,
   onAdopt,
   onRefresh,
+  isMember = true,
 }: AiSuggestionModalProps) {
   if (!isOpen) return null;
 
@@ -34,12 +37,18 @@ export default function AiSuggestionModal({
               <Sparkles className="w-5 h-5 text-purple-600" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900">AI 智能回复生成</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-slate-900">AI 智能回复生成</h3>
+                {!isMember ? <MemberOnlyBadge /> : null}
+              </div>
               <p className="text-xs text-slate-500">基于知识库与当前会话为您推荐最佳回复</p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
+            aria-label="关闭 AI 智能回复生成弹窗"
+            title="关闭"
             className="p-2 hover:bg-slate-100 rounded-full transition-colors"
           >
             <X className="w-5 h-5 text-slate-400" />

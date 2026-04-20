@@ -20,7 +20,7 @@ export interface SettingsNavItem {
 
 export const settingsNavItems: SettingsNavItem[] = [
   { icon: UserCog, label: '坐席与分配', path: '/settings/seats', adminOnly: true },
-  { icon: Languages, label: '智能翻译', path: '/settings/translation', adminOnly: true },
+  { icon: Languages, label: '智能翻译', path: '/settings/translation' },
   { icon: FileText, label: '模板管理', path: '/settings/templates' },
   { icon: BookOpen, label: '知识库', path: '/settings/knowledge' },
   { icon: Clock, label: 'SLA规则', path: '/settings/sla' },
@@ -33,6 +33,9 @@ export function filterSettingsNav(role: User['role'] | undefined) {
 }
 
 export function getDefaultSettingsPath(role: User['role'] | undefined) {
-  const first = filterSettingsNav(role)[0];
-  return first?.path ?? '/settings/templates';
+  if (role === 'admin') {
+    const first = filterSettingsNav(role)[0];
+    return first?.path ?? '/settings/seats';
+  }
+  return '/settings/templates';
 }

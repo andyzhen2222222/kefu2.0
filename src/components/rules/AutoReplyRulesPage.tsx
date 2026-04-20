@@ -12,33 +12,13 @@ import {
   deleteAutoReplyRule,
   type ApiAutoReplyRuleRow,
 } from '@/src/services/intellideskApi';
-import { routingAfterSalesLabel } from '@/src/lib/routingRuleOptions';
-
-function describeTrigger(r: ApiAutoReplyRuleRow): string {
-  if (r.keywords?.length) return `关键字：${r.keywords.join('、')}`;
-  const im = r.intentMatch ?? '';
-  if (im.startsWith('__time__:')) {
-    const rest = im.slice('__time__:'.length);
-    const idx = rest.indexOf(':');
-    const t = idx === -1 ? rest : rest.slice(0, idx);
-    const times = idx === -1 ? '' : rest.slice(idx + 1);
-    let label = '';
-    if (t === 'weekend') label = '周末';
-    else if (t === 'weekday') label = '工作日';
-    else if (t === 'daily') label = '每天';
-    else label = t;
-    return `时间段：${label}${times ? ` (${times})` : ''}`;
-  }
-  if (im.startsWith('__after_sales_type__:')) {
-    const v = im.slice('__after_sales_type__:'.length);
-    return `售后类型：${routingAfterSalesLabel(v)}`;
-  }
-  if (im) return `意图：${im}`;
-  return '—';
-}
+import { describeAutoReplyRuleTrigger } from '@/src/lib/autoReplyConditions';
+import { useMembershipTier } from '@/src/lib/membership';
+import { LockedFeatureNotice, MemberOnlyBadge } from '@/src/components/membership/MemberUi';
 
 export default function AutoReplyRulesPage() {
   const { user } = useAuth();
+  const { isMember } = useMembershipTier();
   const apiOn = intellideskConfigured();
   const [isAddAutoReplyModalOpen, setIsAddAutoReplyModalOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<ApiAutoReplyRuleRow | null>(null);
@@ -81,6 +61,7 @@ export default function AutoReplyRulesPage() {
       if (payload.ruleId) {
         await patchAutoReplyRule(tenantId, userId, payload.ruleId, {
           name: payload.name,
+          conditionsJson: payload.conditionsJson,
           intentMatch: payload.intentMatch,
           keywords: payload.keywords,
           replyContent: payload.replyContent,
@@ -90,6 +71,7 @@ export default function AutoReplyRulesPage() {
         await createAutoReplyRule(tenantId, userId, {
           name: payload.name,
           enabled: true,
+          conditionsJson: payload.conditionsJson,
           intentMatch: payload.intentMatch,
           keywords: payload.keywords,
           replyContent: payload.replyContent,
@@ -131,23 +113,35 @@ export default function AutoReplyRulesPage() {
       <div className="max-w-6xl mx-auto space-y-6">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">自动回复规则</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-slate-900">自动回复规则</h1>
+              {!isMember ? <MemberOnlyBadge className="text-[11px]" /> : null}
+            </div>
             <p className="text-sm text-slate-500 mt-1">
               基于时间、关键字、售后类型配置自动回复；支持修改与启用开关（后端规则表）
             </p>
           </div>
           <button
             type="button"
+            disabled={!isMember}
             onClick={() => {
               setEditingRule(null);
               setIsAddAutoReplyModalOpen(true);
             }}
-            className="px-4 py-2 bg-[#F97316] hover:bg-orange-600 text-white rounded-xl text-sm font-bold transition-colors shadow-sm flex items-center gap-2"
+            title={!isMember ? '自动回复配置仅会员可用' : undefined}
+            className="px-4 py-2 bg-[#F97316] hover:bg-orange-600 text-white rounded-xl text-sm font-bold transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="w-4 h-4" />
             添加规则
           </button>
         </div>
+
+        {!isMember ? (
+          <LockedFeatureNotice
+            title="自动回复配置仅会员可用"
+            description="非会员可以查看自动回复能力与规则结构，但无法新增、编辑、启停或保存规则。开通会员后才会参与真实自动回复。"
+          />
+        ) : null}
 
         {apiOn && error && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
@@ -176,6 +170,8 @@ export default function AutoReplyRulesPage() {
                           type="checkbox"
                           className="sr-only peer"
                           checked={rule.enabled}
+                          aria-label={`${rule.name} 启用开关`}
+                          disabled={!isMember}
                           onChange={(e) => void toggleEnabled(rule, e.target.checked)}
                         />
                         <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#F97316]" />
@@ -183,19 +179,21 @@ export default function AutoReplyRulesPage() {
                       <button
                         type="button"
                         title="修改"
+                        disabled={!isMember}
                         onClick={() => {
                           setEditingRule(rule);
                           setIsAddAutoReplyModalOpen(true);
                         }}
-                        className="p-2 text-slate-400 hover:text-[#F97316] rounded-lg"
+                        className="p-2 text-slate-400 hover:text-[#F97316] rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         <Edit2 className="w-4 h-4" />
                       </button>
                       <button
                         type="button"
                         title="删除"
+                        disabled={!isMember}
                         onClick={() => void removeRule(rule.id)}
-                        className="p-2 text-slate-400 hover:text-red-600 rounded-lg"
+                        className="p-2 text-slate-400 hover:text-red-600 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -204,7 +202,7 @@ export default function AutoReplyRulesPage() {
                   <div className="space-y-2 text-sm">
                     <div className="flex gap-2 flex-wrap">
                       <span className="text-slate-500 shrink-0">触发条件</span>
-                      <span className="font-medium text-slate-900">{describeTrigger(rule)}</span>
+                      <span className="font-medium text-slate-900">{describeAutoReplyRuleTrigger(rule)}</span>
                     </div>
                     <div className="flex gap-2 flex-wrap">
                       <span className="text-slate-500 shrink-0">回复正文</span>
@@ -232,7 +230,13 @@ export default function AutoReplyRulesPage() {
                     <h3 className="font-bold text-slate-900">节假日自动回复</h3>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer ml-4">
-                    <input type="checkbox" className="sr-only peer" defaultChecked readOnly />
+                    <input
+                      type="checkbox"
+                      className="sr-only peer"
+                      defaultChecked
+                      readOnly
+                      aria-label="节假日自动回复启用开关"
+                    />
                     <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#F97316]" />
                   </label>
                 </div>
@@ -261,7 +265,9 @@ export default function AutoReplyRulesPage() {
             <div className="mt-8 pt-6 border-t border-slate-100 flex justify-end">
               <button
                 type="button"
-                className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-bold transition-colors shadow-sm"
+                disabled={!isMember}
+                title={!isMember ? '自动回复配置仅会员可用' : undefined}
+                className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-bold transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Save className="w-4 h-4" />
                 保存更改

@@ -107,6 +107,16 @@ import {
   formatAfterSalesReadableLabel,
   formatTicketReadableRef,
 } from '@/src/lib/businessRefDisplay';
+import {
+  MEMBERSHIP_UPGRADE_URL,
+  memberFeatureMessage,
+  useMembershipTier,
+} from '@/src/lib/membership';
+import {
+  LockedFeatureNotice,
+  MemberOnlyBadge,
+  UpgradeLink,
+} from '@/src/components/membership/MemberUi';
 
 const DEFAULT_MAIN_SYSTEM_ORDER_BASE =
   'https://tiaojia.nezhachuhai.com/dashboard/analyzeOrder/platformOrderDetail';
@@ -433,6 +443,13 @@ export default function TicketDetail({
   const [translationSettings, setTranslationSettings] = useState(() => getTranslationSettings());
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<{ suggestion: string; platformSuggestion?: string } | null>(null);
+  const { isMember } = useMembershipTier();
+
+  const promptMemberFeature = (feature: string) => {
+    const message = memberFeatureMessage(feature);
+    setGlobalApiError(message);
+    window.alert(message);
+  };
 
   useEffect(() => {
     const handleStorage = () => setTranslationSettings(getTranslationSettings());
@@ -467,9 +484,13 @@ export default function TicketDetail({
   }, [ticket.id]);
 
   const aiInsightRefreshable =
-    intellideskConfigured() && Boolean(onUpdateTicket);
+    isMember && intellideskConfigured() && Boolean(onUpdateTicket);
 
   const handleIntentRefresh = async () => {
+    if (!isMember) {
+      promptMemberFeature('AI 意图识别');
+      return;
+    }
     if (!onUpdateTicket || !intellideskConfigured()) return;
     setIntentClassifyLoading(true);
     setGlobalApiError(null);
@@ -490,6 +511,10 @@ export default function TicketDetail({
   };
 
   const handleSentimentRefresh = async () => {
+    if (!isMember) {
+      promptMemberFeature('AI 情绪识别');
+      return;
+    }
     if (!onUpdateTicket || !intellideskConfigured()) return;
     setSentimentClassifyLoading(true);
     setGlobalApiError(null);
@@ -513,6 +538,10 @@ export default function TicketDetail({
   };
 
   const handleTicketAiSummary = async () => {
+    if (!isMember) {
+      promptMemberFeature('AI 摘要');
+      return;
+    }
     if (!intellideskConfigured()) return;
     setTicketAiSummaryLoading(true);
     setGlobalApiError(null);
@@ -529,6 +558,10 @@ export default function TicketDetail({
   };
 
   const handleTicketInsight = async () => {
+    if (!isMember) {
+      promptMemberFeature('AI 分析');
+      return;
+    }
     if (!intellideskConfigured() || !onUpdateTicket) return;
     setTicketInsightLoading(true);
     setGlobalApiError(null);
@@ -552,13 +585,13 @@ export default function TicketDetail({
   };
 
   useEffect(() => {
-    if (autoInsightEnabled && intellideskConfigured() && onUpdateTicket) {
+    if (isMember && autoInsightEnabled && intellideskConfigured() && onUpdateTicket) {
       // 仅在摘要为空时自动触发，避免重复调用
       if (!ticketAiSummary && !ticketInsightLoading) {
         void handleTicketInsight();
       }
     }
-  }, [ticket.id, autoInsightEnabled]);
+  }, [ticket.id, autoInsightEnabled, isMember]);
 
   const toggleAutoInsight = (enabled: boolean) => {
     setAutoInsightEnabled(enabled);
@@ -569,7 +602,7 @@ export default function TicketDetail({
    * 对消息列表执行批量翻译。
    */
   const handleBatchTranslateMessages = async (messagesToTranslate: Message[]) => {
-    if (!intellideskConfigured() || !translationSettings.inboundTranslateEnabled || messagesToTranslate.length === 0) return;
+    if (!isMember || !intellideskConfigured() || !translationSettings.inboundTranslateEnabled || messagesToTranslate.length === 0) return;
 
     const tenantId = intellideskTenantId();
     const userId = intellideskUserIdForApi(user?.id);
@@ -637,7 +670,7 @@ export default function TicketDetail({
    * 当租户点击工单（ticket.id 变化）或有新消息时，批量翻译所有缺失翻译的消息。
    */
   useEffect(() => {
-    if (!intellideskConfigured() || !translationSettings.inboundTranslateEnabled) return;
+    if (!isMember || !intellideskConfigured() || !translationSettings.inboundTranslateEnabled) return;
 
     const need = messages.filter((m) => {
       if (m.isInternal || !m.content?.trim()) return false;
@@ -705,6 +738,10 @@ export default function TicketDetail({
   };
 
   const handleSyncLogistics = async (force = false) => {
+    if (!isMember) {
+      promptMemberFeature('物流状态刷新');
+      return;
+    }
     if (!order || !order.id || isSyncingLogistics) return;
     setIsSyncingLogistics(true);
     try {
@@ -828,6 +865,10 @@ export default function TicketDetail({
   };
 
   const handleAiSuggest = async () => {
+    if (!isMember) {
+      promptMemberFeature('AI 智能回复');
+      return;
+    }
     setIsAiModalOpen(true);
     setAiSuggestion(null);
     setIsGeneratingDraft(true);
@@ -853,6 +894,10 @@ export default function TicketDetail({
   };
 
   const handleAiPolish = async () => {
+    if (!isMember) {
+      promptMemberFeature('AI 润色');
+      return;
+    }
     if (isPolishing || !replyText.trim()) return;
 
     setIsPolishing(true);
@@ -924,6 +969,10 @@ export default function TicketDetail({
 
     const recipients: ('customer' | 'manager')[] = [];
     if (!isInternalNote) {
+      if (!isMember) {
+        promptMemberFeature('发送消息');
+        return;
+      }
       if (sendToCustomer) recipients.push('customer');
       if (sendToManager) recipients.push('manager');
       if (recipients.length === 0) return;
@@ -1157,7 +1206,9 @@ export default function TicketDetail({
           ) : null}
           {visibleMessages.map((message) => {
             const isRtl = message.senderType === 'agent' || message.senderType === 'ai';
-            const translationOn = translationSettings.inboundTranslateEnabled;
+            const translationOn = isMember && translationSettings.inboundTranslateEnabled;
+            const showTranslationLockedHint =
+              !isMember && !message.isInternal && message.senderType !== 'system';
             
             let topText = message.content;
             let bottomText = '';
@@ -1335,6 +1386,43 @@ export default function TicketDetail({
                       </div>
                     )}
 
+                    {showTranslationLockedHint && (
+                      <div
+                        className={cn(
+                          'mt-2 pt-2 border-t flex items-center justify-between gap-2',
+                          message.senderType === 'manager'
+                            ? 'border-amber-200/50'
+                            : message.senderType === 'ai'
+                              ? 'border-white/20'
+                              : message.senderType === 'agent'
+                                ? 'border-white/20'
+                                : 'border-slate-100'
+                        )}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Languages className="w-3.5 h-3.5 shrink-0 opacity-80" />
+                          <span className="text-[10px] leading-relaxed opacity-90">
+                            {isRtl ? '会员功能：开通后可查看平台语与中文对照。' : '会员功能：开通后可查看消息翻译。'}
+                          </span>
+                        </div>
+                        <a
+                          href={MEMBERSHIP_UPGRADE_URL}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={cn(
+                            'shrink-0 rounded-md px-2 py-1 text-[10px] font-bold transition-colors',
+                            message.senderType === 'manager'
+                              ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                              : message.senderType === 'ai' || message.senderType === 'agent'
+                                ? 'bg-white/15 text-white hover:bg-white/25'
+                                : 'bg-orange-50 text-orange-700 hover:bg-orange-100'
+                          )}
+                        >
+                          开通会员
+                        </a>
+                      </div>
+                    )}
+
                     {message.attachments && message.attachments.length > 0 && (
                     <div
                       className={cn(
@@ -1455,12 +1543,20 @@ export default function TicketDetail({
                       >
                         <Languages className="w-3.5 h-3.5 text-slate-500 shrink-0" strokeWidth={2} />
                         自动翻译
+                        {!isMember ? <MemberOnlyBadge /> : null}
                         <ChevronUp className={cn("w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform", showTranslationPopover && "rotate-180")} />
                       </button>
 
                       {showTranslationPopover && (
                         <div className="absolute right-0 bottom-full mb-2 w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
                           <div className="p-4 space-y-4">
+                            {!isMember ? (
+                              <LockedFeatureNotice
+                                compact
+                                title="翻译能力需开通会员"
+                                description="非会员可以看到翻译入口，但无法使用消息翻译和发送前自动翻译。"
+                              />
+                            ) : null}
                             <div className="flex items-center justify-between">
                               <div className="space-y-0.5">
                                 <p className="text-xs font-bold text-slate-900">我的语言与自动翻译</p>
@@ -1663,6 +1759,7 @@ export default function TicketDetail({
                         <Pencil className="w-3.5 h-3.5" />
                       )}
                       AI 润色
+                      {!isMember ? <MemberOnlyBadge /> : null}
                     </button>
                   </div>
                 </div>
@@ -1829,6 +1926,11 @@ export default function TicketDetail({
                       </div>
                     </div>
                   )}
+                  {!isInternalNote && !isMember ? (
+                    <span className="text-[11px] font-medium text-amber-700">
+                      非会员可查看会话，但发送消息、自动翻译与 AI 润色需先开通会员。
+                    </span>
+                  ) : null}
                 </div>
 
                 <div className="flex items-center gap-4 ml-auto">
@@ -1845,8 +1947,14 @@ export default function TicketDetail({
                   <button
                     type="button"
                     onClick={handleSend}
-                    disabled={!replyText.trim() || !outboundRecipientReady}
-                    title={!outboundRecipientReady && !isInternalNote ? '请至少选择客户或平台经理' : undefined}
+                    disabled={!replyText.trim() || (!isMember ? false : !outboundRecipientReady)}
+                    title={
+                      !isInternalNote && !isMember
+                        ? '发送消息需开通会员'
+                        : !outboundRecipientReady && !isInternalNote
+                          ? '请至少选择客户或平台经理'
+                          : undefined
+                    }
                     className={cn(
                       'flex items-center gap-2 px-6 py-2 text-sm font-bold text-white rounded-lg shadow-sm transition-all',
                       isInternalNote
@@ -1909,6 +2017,20 @@ export default function TicketDetail({
                   <Sparkles className="w-3.5 h-3.5 text-purple-500" />
                   AI 分析
                 </h3>
+                {!isMember ? <MemberOnlyBadge /> : null}
+              </div>
+
+              {!isMember ? (
+                <div className="space-y-4">
+                  <LockedFeatureNotice
+                    title="AI 分析仅会员可用"
+                    description="非会员可以查看 AI 分析页入口，但无法执行工单摘要、意图/情绪识别或生成智能回复。"
+                  />
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500 leading-relaxed">
+                    开通会员后，这里会提供工单摘要、情绪分析、意图识别和智能回复草稿。
+                  </div>
+                </div>
+              ) : (
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => void handleTicketInsight()}
@@ -1937,14 +2059,14 @@ export default function TicketDetail({
                     <span className="text-[10px] font-medium text-slate-500 group-hover:text-slate-700 transition-colors">自动</span>
                   </label>
                 </div>
-              </div>
+              )}
 
-              {ticketInsightLoading && !ticketAiSummary ? (
+              {isMember && ticketInsightLoading && !ticketAiSummary ? (
                 <div className="flex flex-col items-center justify-center py-12 text-slate-400">
                   <Loader2 className="w-8 h-8 animate-spin mb-3 text-slate-200" />
                   <p className="text-xs">正在深度分析对话并生成摘要…</p>
                 </div>
-              ) : ticketAiSummary ? (
+              ) : isMember && ticketAiSummary ? (
                 <div className="space-y-4 overflow-y-auto pr-1 custom-scrollbar">
                   <div className="bg-purple-50/50 border border-purple-100 rounded-xl p-4 shadow-sm relative overflow-hidden group">
                     <div className="absolute top-0 left-0 w-1 h-full bg-purple-400/50" />
@@ -2012,7 +2134,7 @@ export default function TicketDetail({
                     </p>
                   </div>
                 </div>
-              ) : (
+              ) : isMember ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mb-3">
                     <Sparkles className="w-6 h-6 text-slate-300" />
@@ -2041,7 +2163,7 @@ export default function TicketDetail({
                     生成智能回复
                   </button>
                 </div>
-              )}
+              ) : null}
             </section>
           </div>
         )}
@@ -2382,6 +2504,13 @@ export default function TicketDetail({
           <div className="flex flex-col p-4">
             {order && (order.trackingNumber?.trim() || order.logisticsStatus != null) ? (
               <div className="space-y-6">
+                {!isMember ? (
+                  <LockedFeatureNotice
+                    compact
+                    title="物流刷新为会员功能"
+                    description="非会员可查看已有物流轨迹，但无法主动刷新 17track 物流状态。"
+                  />
+                ) : null}
                 {/* Logistics Overview Card */}
                 <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
                   <div className="flex items-start justify-between gap-2 flex-wrap">
@@ -2423,15 +2552,22 @@ export default function TicketDetail({
                      <div className="flex flex-col items-end gap-1 shrink-0">
                        <button
                          onClick={() => handleSyncLogistics(true)}
-                         disabled={isSyncingLogistics}
+                         disabled={isSyncingLogistics || !isMember}
                          className={cn(
                            "p-1.5 rounded-lg border border-slate-200 bg-white text-slate-500 hover:text-blue-600 hover:border-blue-200 hover:bg-blue-50 transition-all shadow-sm disabled:opacity-50",
                            isSyncingLogistics && "animate-spin"
                          )}
-                         title="同步 17track 物流轨迹"
+                         title={isMember ? "同步 17track 物流轨迹" : "物流状态刷新需开通会员"}
                        >
                          <RefreshCw className={cn("w-3.5 h-3.5", isSyncingLogistics && "animate-spin")} />
                        </button>
+                       {!isMember ? (
+                         <div className="flex flex-col items-end gap-1">
+                           <MemberOnlyBadge />
+                           <span className="text-[10px] text-amber-700 font-medium">刷新物流需开通会员</span>
+                           <UpgradeLink label="开通会员" className="px-2.5 py-1 text-[10px]" />
+                         </div>
+                       ) : null}
                        {order.logisticsLastSyncedAt && (
                          <span className="text-[9px] text-slate-400 font-medium">
                            上次同步: {format(new Date(order.logisticsLastSyncedAt), 'HH:mm')}
@@ -2586,13 +2722,23 @@ export default function TicketDetail({
               </div>
             ) : (
               <div className="space-y-6 animate-in fade-in duration-300">
+                {!isMember ? (
+                  <LockedFeatureNotice
+                    compact
+                    title="发票预览为会员功能"
+                    description="非会员可查看发票能力与模板，但无法生成、预览或发送发票。"
+                  />
+                ) : null}
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-[#F97316]">
                       <FileText className="w-4.5 h-4.5" />
                     </div>
                     <div>
-                      <h4 className="text-sm font-bold text-slate-900">生成发票</h4>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-sm font-bold text-slate-900">生成发票</h4>
+                        {!isMember ? <MemberOnlyBadge /> : null}
+                      </div>
                       <p className="text-[11px] text-slate-500">请选择发票模版并预览</p>
                     </div>
                   </div>
@@ -2645,12 +2791,25 @@ export default function TicketDetail({
                 </div>
 
                 <button 
-                  onClick={() => setIsPreviewModalOpen(true)}
+                  onClick={() => {
+                    if (!isMember) {
+                      promptMemberFeature('发票预览');
+                      return;
+                    }
+                    setIsPreviewModalOpen(true);
+                  }}
+                  title={!isMember ? '发票预览需开通会员' : undefined}
                   className="w-full py-3 bg-gradient-to-r from-[#F97316] to-[#FB923C] hover:from-orange-600 hover:to-orange-500 text-white rounded-xl text-sm font-bold shadow-lg shadow-orange-500/20 transition-all flex items-center justify-center gap-2 group active:scale-[0.98]"
                 >
                   <FileText className="w-4 h-4 group-hover:rotate-6 transition-transform" />
                   生成并预览发票
                 </button>
+                {!isMember ? (
+                  <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                    <p className="text-[11px] text-amber-800 leading-relaxed">发票预览、下载和发送均为会员功能。</p>
+                    <UpgradeLink label="开通会员" className="px-2.5 py-1 text-[10px] shrink-0" />
+                  </div>
+                ) : null}
               </div>
             )}
           </div>
@@ -2791,7 +2950,7 @@ export default function TicketDetail({
         customer={customer}
         lang={getInvoiceLang()}
         onSendToCustomer={
-          onSendMessage
+          onSendMessage && isMember
             ? ({ content, attachments }) =>
                 onSendMessage({
                   content,
@@ -2830,6 +2989,7 @@ export default function TicketDetail({
         suggestion={aiSuggestion}
         onAdopt={handleAdoptAiSuggestion}
         onRefresh={handleAiSuggest}
+        isMember={isMember}
       />
 
       {/* Citation Sources Modal */}

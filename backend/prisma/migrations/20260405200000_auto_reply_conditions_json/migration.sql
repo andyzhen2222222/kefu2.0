@@ -1,0 +1,1 @@
+ALTER TABLE "AutoReplyRule" ADD COLUMN IF NOT EXISTS "conditionsJson" JSONB;

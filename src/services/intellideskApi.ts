@@ -1363,6 +1363,7 @@ export type ApiAutoReplyRuleRow = {
   enabled: boolean;
   intentMatch: string | null;
   keywords: string[];
+  conditionsJson?: unknown | null;
   replyContent: string | null;
   markRepliedOnSend: boolean;
 };
@@ -1383,6 +1384,7 @@ export type CreateAutoReplyRuleBody = {
   enabled?: boolean;
   intentMatch?: string | null;
   keywords?: string[];
+  conditionsJson?: unknown;
   replyContent?: string | null;
   markRepliedOnSend?: boolean;
 };
@@ -1406,6 +1408,7 @@ export type PatchAutoReplyRuleBody = Partial<{
   enabled: boolean;
   intentMatch: string | null;
   keywords: string[];
+  conditionsJson: unknown;
   replyContent: string | null;
   markRepliedOnSend: boolean;
 }>;

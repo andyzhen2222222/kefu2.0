@@ -403,6 +403,8 @@ model AutoReplyRule {
   enabled     Boolean  @default(true)
   intentMatch String?
   keywords    String[] @default([])
+  /** v1 多条件 JSON：combine + time / keywords / afterSalesType / legacyIntent（与旧 intentMatch+keywords 二选一，优先本字段） */
+  conditionsJson Json?
   replyContent String? @db.Text
   markRepliedOnSend Boolean @default(false)
   createdAt   DateTime @default(now())
