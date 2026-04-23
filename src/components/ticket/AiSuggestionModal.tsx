@@ -1,8 +1,6 @@
 import React from 'react';
 import { X, RefreshCw, Check, Loader2, Sparkles, Languages } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
-import { MemberOnlyBadge } from '@/src/components/membership/MemberUi';
-
 interface AiSuggestionModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -10,7 +8,6 @@ interface AiSuggestionModalProps {
   suggestion: { suggestion: string; platformSuggestion?: string } | null;
   onAdopt: (text: string) => void;
   onRefresh: () => void;
-  isMember?: boolean;
 }
 
 export default function AiSuggestionModal({
@@ -20,7 +17,6 @@ export default function AiSuggestionModal({
   suggestion,
   onAdopt,
   onRefresh,
-  isMember = true,
 }: AiSuggestionModalProps) {
   if (!isOpen) return null;
 
@@ -39,7 +35,6 @@ export default function AiSuggestionModal({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-slate-900">AI 智能回复生成</h3>
-                {!isMember ? <MemberOnlyBadge /> : null}
               </div>
               <p className="text-xs text-slate-500">基于知识库与当前会话为您推荐最佳回复</p>
             </div>

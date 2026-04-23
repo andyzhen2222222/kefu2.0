@@ -18,6 +18,11 @@ import { zhCN } from 'date-fns/locale';
 import { InboxTicketStatusIcons } from '@/src/lib/ticketStatusUi';
 import { getTicketSubjectForDisplay } from '@/src/components/settings/TranslationSettingsPage';
 import { platformGroupLabelForTicket } from '@/src/lib/platformLabels';
+import {
+  isPlatformPlanExpired,
+  ticketPassesPlatformPlan,
+  uniquePlatformKeysFromTickets,
+} from '@/src/lib/platformSubscription';
 import { InboxListPlatformMark } from '@/src/components/inbox/InboxListPlatformMark';
 import { useAuth } from '@/src/hooks/useAuth';
 import {
@@ -129,6 +134,23 @@ export default function InboxList({
   const [shopTicketsPage, setShopTicketsPage] = useState(0);
   const [shopListLoading, setShopListLoading] = useState(false);
 
+  /** 仅「店铺套餐」未到期的工单进入列表；到期平台仍出现在下拉里提示续费 */
+  const ticketsAfterPlatformPlan = useMemo(
+    () => tickets.filter(ticketPassesPlatformPlan),
+    [tickets]
+  );
+
+  const allPlatformKeys = useMemo(() => uniquePlatformKeysFromTickets(tickets), [tickets]);
+
+  const platformVisibleCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    ticketsAfterPlatformPlan.forEach((t) => {
+      const p = platformGroupLabelForTicket(t.platformType, t.channelId);
+      m[p] = (m[p] ?? 0) + 1;
+    });
+    return m;
+  }, [ticketsAfterPlatformPlan]);
+
   const channelOptions = useMemo(() => {
     const s = new Set<string>();
     tickets.forEach((t) => {
@@ -171,7 +193,7 @@ export default function InboxList({
   // Track major dependencies that should trigger a full re-sort/re-filter
   // We don't include 'tickets' directly because we want to handle internal updates separately
   const majorDepsKey = JSON.stringify({
-    count: tickets.length,
+    count: ticketsAfterPlatformPlan.length,
     sortBy,
     searchQuery,
     listSearchServerBacked,
@@ -185,7 +207,7 @@ export default function InboxList({
 
   useEffect(() => {
     // Perform full filtering and sorting
-    let result = [...tickets];
+    let result = [...ticketsAfterPlatformPlan];
 
     if (searchQuery.trim() && !listSearchServerBacked) {
       const query = searchQuery.trim().toLowerCase();
@@ -253,7 +275,7 @@ export default function InboxList({
     });
 
     setDisplayTickets(result);
-  }, [majorDepsKey, tickets.length]); // Re-sort on major deps OR when a ticket is added/removed
+  }, [majorDepsKey, ticketsAfterPlatformPlan.length]); // Re-sort on major deps OR when a ticket is added/removed
 
   // 2. Minor Update Logic: Keep the current order but update the ticket content
   useEffect(() => {
@@ -282,18 +304,14 @@ export default function InboxList({
     }, {} as Record<string, Record<string, Ticket[]>>);
   }, [displayTickets]);
 
-  const sortedPlatforms = useMemo(
-    () => Object.keys(groupedTickets).sort((a, b) => a.localeCompare(b, 'zh-CN')),
-    [groupedTickets]
-  );
-
+  /** 下拉用：含已到期平台；数量仅为未到期列表内可见条数 */
   const platformTicketCounts = useMemo(() => {
-    const m: Record<string, number> = {};
-    for (const [p, shops] of Object.entries(groupedTickets)) {
-      m[p] = Object.values(shops).flat().length;
+    const m: Record<string, number> = { ...platformVisibleCounts };
+    for (const p of allPlatformKeys) {
+      if (m[p] === undefined) m[p] = 0;
     }
     return m;
-  }, [groupedTickets]);
+  }, [allPlatformKeys, platformVisibleCounts]);
 
   const sortedShopsForPlatform = useMemo(() => {
     if (selectedPlatform === ALL_PLATFORMS) {
@@ -337,16 +355,16 @@ export default function InboxList({
   const allShopsScopeCount = ticketsBeforeShopFilter.length;
 
   useLayoutEffect(() => {
-    if (sortedPlatforms.length === 0) {
+    if (allPlatformKeys.length === 0) {
       setSelectedPlatform(ALL_PLATFORMS);
       setSelectedShop(ALL_SHOPS);
       return;
     }
     setSelectedPlatform((prev) => {
       if (prev === ALL_PLATFORMS) return ALL_PLATFORMS;
-      return groupedTickets[prev] ? prev : ALL_PLATFORMS;
+      return allPlatformKeys.includes(prev) ? prev : ALL_PLATFORMS;
     });
-  }, [groupedTickets, sortedPlatforms]);
+  }, [allPlatformKeys]);
 
   useLayoutEffect(() => {
     if (selectedShop === ALL_SHOPS) return;
@@ -638,11 +656,15 @@ export default function InboxList({
                   <option value={ALL_PLATFORMS}>
                     全部平台（{displayTickets.length}）
                   </option>
-                  {sortedPlatforms.map((platform) => (
-                    <option key={platform} value={platform}>
-                      {platform}（{platformTicketCounts[platform] ?? 0}）
-                    </option>
-                  ))}
+                  {allPlatformKeys.map((platform) => {
+                    const expired = isPlatformPlanExpired(platform);
+                    return (
+                      <option key={platform} value={platform}>
+                        {platform}（{platformTicketCounts[platform] ?? 0}）
+                        {expired ? ' · 套餐已到期' : ''}
+                      </option>
+                    );
+                  })}
                 </select>
 
                 <label

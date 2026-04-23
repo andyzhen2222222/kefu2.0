@@ -6,39 +6,12 @@ export const MEMBERSHIP_STORAGE_KEY = 'intellidesk_membership_tier';
 export const MEMBERSHIP_CHANGE_EVENT = 'intellidesk-membership-changed';
 export const MEMBERSHIP_UPGRADE_URL = 'https://tiaojia.nezhachuhai.com/buying';
 
-function resolveTierFromQuery(): MembershipTier | null {
-  if (typeof window === 'undefined') return null;
-  const params = new URLSearchParams(window.location.search);
-  const membership = params.get('membership')?.trim().toLowerCase();
-  if (membership === 'free' || membership === 'member') return membership;
-
-  const member = params.get('member')?.trim().toLowerCase();
-  if (member === '0' || member === 'false' || member === 'free') return 'free';
-  if (member === '1' || member === 'true' || member === 'member') return 'member';
-  return null;
-}
-
-function resolveDefaultTier(): MembershipTier {
-  if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
-    return 'free';
-  }
-  return 'member';
-}
+/** 订阅页入口图标悬停提示（与 UI 文案统一） */
+export const PAID_FEATURE_HINT = '付费功能';
 
 export function getMembershipTier(): MembershipTier {
-  const queryTier = resolveTierFromQuery();
-  if (queryTier) return queryTier;
-
-  if (typeof window !== 'undefined') {
-    try {
-      const raw = window.localStorage.getItem(MEMBERSHIP_STORAGE_KEY)?.trim().toLowerCase();
-      if (raw === 'free' || raw === 'member') return raw;
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return resolveDefaultTier();
+  /** 产品策略：客服能力不按「个人会员」开关，一律视为已开通（平台套餐由 InboxList 等平台维度管理） */
+  return 'member';
 }
 
 export function isMemberActive(): boolean {
@@ -76,6 +49,6 @@ export function useMembershipTier() {
   };
 }
 
-export function memberFeatureMessage(feature: string): string {
-  return `${feature}为会员功能，开通会员后即可使用。`;
+export function memberFeatureMessage(_feature: string): string {
+  return '';
 }
