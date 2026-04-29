@@ -82,7 +82,9 @@ export default function IntellideskSourceStrip() {
       <span className="mx-2 text-amber-800">·</span>
       <span>
         你当前是 <strong>纯演示模式</strong>（<code className="rounded bg-amber-200/80 px-1">npm run dev</code> /{' '}
-        <code className="rounded bg-amber-200/80 px-1">dev:mock</code>，端口 3000）。要看真实数据：改跑{' '}
+        <code className="rounded bg-amber-200/80 px-1">dev:mock</code>，建议访问{' '}
+        <code className="rounded bg-amber-200/80 px-1">http://127.0.0.1:5173</code>
+        ）。若 localhost 打不开请改用上述地址。要看真实数据：改跑{' '}
         <code className="rounded bg-amber-200/80 px-1">npm run dev:api</code>（端口 4001，代理到后端 4000），并另开终端{' '}
         <code className="rounded bg-amber-200/80 px-1">cd backend && npm run dev</code>、数据库已就绪。
       </span>

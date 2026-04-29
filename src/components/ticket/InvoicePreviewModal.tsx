@@ -295,22 +295,50 @@ export default function InvoicePreviewModal({
       address: '123 Commerce Street, London, UK EC1A 1BB',
       vatNumber: 'GB123456789'
     };
+    const storeAny = store as Record<string, unknown>;
+    const shopLogoUrl =
+      (typeof storeAny.logoUrl === 'string' && storeAny.logoUrl.trim()) ||
+      (typeof storeAny.logo === 'string' && storeAny.logo.trim()) ||
+      (typeof storeAny.brandLogoUrl === 'string' && storeAny.brandLogoUrl.trim()) ||
+      '';
 
     if (template === 'receipt') {
       return (
-        <div className="max-w-md mx-auto bg-white p-12 shadow-sm rounded-xl font-mono text-sm text-slate-800 relative overflow-hidden" style={{ backgroundColor: '#F9F9F7' }}>
-          {/* Decorative top edge */}
-          <div className="absolute top-0 left-0 right-0 h-2 bg-slate-800" style={{ background: 'linear-gradient(to right, #1e293b, #475569)' }}></div>
-          
-          <div className="text-center mb-10">
-            <div className="w-14 h-14 bg-slate-900 text-white rounded-full flex items-center justify-center mx-auto mb-6 text-2xl font-bold font-sans tracking-tighter" style={{ backgroundColor: '#0f172a', color: '#ffffff' }}>
-              {store.displayName.charAt(0)}
+        <div
+          className="max-w-3xl mx-auto bg-white p-16 shadow-sm rounded-xl font-sans text-slate-700 relative"
+          style={{ backgroundColor: '#ffffff', color: '#334155' }}
+        >
+          <div className="flex justify-between items-start mb-10 relative z-10">
+            <div>
+              {shopLogoUrl ? (
+                <img
+                  src={shopLogoUrl}
+                  alt={`${store.displayName} logo`}
+                  className="w-12 h-12 rounded-xl object-cover mb-6 border border-slate-200"
+                />
+              ) : null}
+              <h1 className="text-4xl font-bold text-slate-900 tracking-tight mb-2" style={{ color: '#0f172a' }}>
+                {t.receipt}
+              </h1>
+              <p className="text-slate-500 font-mono text-sm tracking-wider" style={{ color: '#64748b' }}>
+                {format(new Date(), 'MMM dd, yyyy HH:mm')}
+              </p>
             </div>
-            <h2 className="text-3xl font-bold tracking-[0.2em] uppercase text-slate-900 mb-2" style={{ color: '#0f172a' }}>{t.receipt}</h2>
-            <p className="text-slate-500 text-xs tracking-widest uppercase" style={{ color: '#64748b' }}>{format(new Date(), 'MMM dd, yyyy HH:mm')}</p>
+
+            <div className="text-right">
+              <h3 className="font-bold text-slate-900 text-xl tracking-tight mb-2" style={{ color: '#0f172a' }}>
+                {store.legalName}
+              </h3>
+              <p className="text-slate-500 text-sm leading-relaxed whitespace-pre-line" style={{ color: '#64748b' }}>
+                {store.address}
+              </p>
+              <p className="text-slate-400 text-sm mt-3 font-mono" style={{ color: '#94a3b8' }}>
+                VAT: {store.vatNumber}
+              </p>
+            </div>
           </div>
-          
-          <div className="border-y border-dashed border-slate-300 py-6 mb-6 space-y-3" style={{ borderTop: '1px dashed #cbd5e1', borderBottom: '1px dashed #cbd5e1' }}>
+
+          <div className="border-y border-dashed border-slate-300 py-6 mb-8 space-y-3" style={{ borderTop: '1px dashed #cbd5e1', borderBottom: '1px dashed #cbd5e1' }}>
             <div className="flex justify-between items-baseline">
               <span className="text-slate-500 text-xs uppercase tracking-wider" style={{ color: '#64748b' }}>{t.orderNo}</span>
               <span className="font-bold text-slate-900 tracking-tight" style={{ color: '#0f172a' }}>{order.platformOrderId}</span>
@@ -321,23 +349,63 @@ export default function InvoicePreviewModal({
             </div>
           </div>
 
-          <div className="space-y-4 mb-8">
-            {order.productTitles.map((title, i) => (
-              <div key={i} className="flex justify-between gap-6 leading-relaxed">
-                <span className="text-slate-700" style={{ color: '#334155' }}>{title}</span>
-                <span className="shrink-0 font-medium">1 × {order.amount}{order.currency}</span>
-              </div>
-            ))}
+          <table className="w-full mb-10" style={{ borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th
+                  className="text-left py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b-2 border-slate-900"
+                  style={{ color: '#94a3b8', borderBottom: '2px solid #0f172a' }}
+                >
+                  {t.description}
+                </th>
+                <th
+                  className="text-center py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b-2 border-slate-900 w-20"
+                  style={{ color: '#94a3b8', borderBottom: '2px solid #0f172a' }}
+                >
+                  {t.qty}
+                </th>
+                <th
+                  className="text-right py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b-2 border-slate-900 w-44"
+                  style={{ color: '#94a3b8', borderBottom: '2px solid #0f172a' }}
+                >
+                  {t.amount}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {order.productTitles.map((title, i) => (
+                <tr key={i}>
+                  <td className="py-4 text-slate-900 font-medium border-b border-slate-100" style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    {title}
+                  </td>
+                  <td className="py-4 text-center text-slate-500 border-b border-slate-100 font-mono" style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    1
+                  </td>
+                  <td className="py-4 text-right text-slate-900 font-bold border-b border-slate-100 font-mono" style={{ borderBottom: '1px solid #f1f5f9' }}>
+                    {order.amount} {order.currency}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="flex justify-end mb-6">
+            <div
+              className="w-80 bg-slate-900 text-white p-6 rounded-lg flex justify-between items-center"
+              style={{ backgroundColor: '#0f172a', color: '#ffffff' }}
+            >
+              <span className="text-xs uppercase tracking-widest font-bold opacity-80">{t.total}</span>
+              <span className="text-2xl font-bold tracking-tight">
+                {order.amount} {order.currency}
+              </span>
+            </div>
           </div>
 
-          <div className="bg-slate-900 text-white p-6 rounded-lg flex justify-between items-center" style={{ backgroundColor: '#0f172a', color: '#ffffff' }}>
-            <span className="text-xs uppercase tracking-widest font-bold opacity-80">{t.total}</span>
-            <span className="text-2xl font-bold tracking-tight">{order.amount} {order.currency}</span>
-          </div>
-          
-          <div className="mt-12 text-center text-xs text-slate-400 uppercase tracking-widest space-y-1" style={{ color: '#94a3b8' }}>
+          <div className="mt-6 text-center text-xs text-slate-400 uppercase tracking-widest space-y-1" style={{ color: '#94a3b8' }}>
             <p>{t.thankYou}</p>
-            <p className="font-bold text-slate-500" style={{ color: '#64748b' }}>{store.legalName}</p>
+            <p className="font-bold text-slate-500" style={{ color: '#64748b' }}>
+              {store.legalName}
+            </p>
           </div>
         </div>
       );
@@ -350,9 +418,13 @@ export default function InvoicePreviewModal({
           
           <div className="flex justify-between items-start mb-16 relative z-10">
             <div>
-              <div className="w-12 h-12 bg-slate-900 text-white rounded-xl flex items-center justify-center mb-6 text-2xl font-bold tracking-tighter shadow-sm" style={{ backgroundColor: '#0f172a', color: '#ffffff' }}>
-                {store.displayName.charAt(0)}
-              </div>
+              {shopLogoUrl ? (
+                <img
+                  src={shopLogoUrl}
+                  alt={`${store.displayName} logo`}
+                  className="w-12 h-12 rounded-xl object-cover mb-6 border border-slate-200"
+                />
+              ) : null}
               <h1 className="text-5xl font-bold text-slate-900 tracking-tighter mb-2" style={{ color: '#0f172a' }}>{t.invoice}</h1>
               <p className="text-slate-500 font-mono text-sm tracking-wider" style={{ color: '#64748b' }}>#INV-{order.id.replace('ORD-', '')}</p>
             </div>
@@ -432,90 +504,222 @@ export default function InvoicePreviewModal({
     }
 
     if (template === 'commercial') {
-      const ht = (order.amount / 1.2).toFixed(2);
-      const tva = (order.amount - parseFloat(ht)).toFixed(2);
-      
+      const itemCount = Math.max(1, order.productTitles?.length ?? 0);
+      const qty = 1;
+      const unitPriceBeforeTaxesAndShipping = order.amount / itemCount;
+      const subtotal = unitPriceBeforeTaxesAndShipping * qty * order.productTitles.length;
+      const shippingCostWithoutTaxes: number = 0;
+      const taxes: number = 0; // 参照模板：Always 0 (zero)
+      const totalAmount = subtotal + shippingCostWithoutTaxes + taxes;
+
+      const invoiceNo = `INV-${order.platformOrderId.replace(/-/g, '').slice(-12)}`;
+      const invoiceDate = format(new Date(), 'yyyy-MM-dd');
+
       return (
-        <div className="max-w-4xl mx-auto bg-white p-16 shadow-sm font-sans text-[13px] text-slate-800 border border-slate-200 relative" style={{ backgroundColor: '#ffffff', color: '#1e293b' }}>
-          {/* Minimalist header accent */}
-          <div className="absolute top-0 left-16 w-24 h-1 bg-[#2b78b5]" style={{ backgroundColor: '#2b78b5' }}></div>
-          
-          <div className="flex justify-between items-end mb-16">
-            <h1 className="text-4xl font-light text-[#2b78b5] tracking-tight" style={{ color: '#2b78b5' }}>{t.commercialInvoice.split(' ')[0]}<br/><span className="font-bold">{t.commercialInvoice.split(' ')[1]}</span></h1>
-            <div className="text-right space-y-1">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest" style={{ color: '#94a3b8' }}>{t.invoiceNo}</p>
-              <p className="text-xl font-mono font-bold text-slate-900" style={{ color: '#0f172a' }}>{order.platformOrderId.replace(/-/g, '')}M-A</p>
-              <p className="text-slate-500 font-mono text-xs mt-2" style={{ color: '#64748b' }}>{format(new Date(), 'yyyy-MM-dd HH:mm:ss')}</p>
+        <div
+          className="max-w-3xl mx-auto bg-white p-16 shadow-sm rounded-xl font-sans text-slate-700 relative"
+          style={{ backgroundColor: '#ffffff', color: '#334155' }}
+        >
+          <div
+            className="absolute top-0 right-16 w-32 h-32 bg-slate-50 rounded-full -translate-y-1/2 opacity-50 blur-2xl"
+            style={{ backgroundColor: '#f8fafc' }}
+          />
+
+          <div className="flex justify-between items-start mb-10 relative z-10">
+            <div>
+              {shopLogoUrl ? (
+                <img
+                  src={shopLogoUrl}
+                  alt={`${store.displayName} logo`}
+                  className="w-12 h-12 rounded-xl object-cover mb-6 border border-slate-200"
+                />
+              ) : null}
+              <h1 className="text-4xl font-bold text-slate-900 tracking-tight mb-2" style={{ color: '#0f172a' }}>
+                Commercial Invoice
+              </h1>
+              <p className="text-slate-500 font-mono text-sm tracking-wider" style={{ color: '#64748b' }}>
+                {`Order: ${order.platformOrderId}`}
+              </p>
             </div>
           </div>
-          
-          <div className="grid grid-cols-2 gap-16 mb-16">
-            <div className="space-y-2">
-              <p className="text-[10px] font-bold text-[#2b78b5] uppercase tracking-widest mb-4" style={{ color: '#2b78b5' }}>{t.issuer}</p>
-              <div className="bg-slate-50 p-6 rounded-xl border border-slate-100 space-y-2" style={{ backgroundColor: '#f8fafc', border: '1px solid #f1f5f9' }}>
-                <p className="flex justify-between"><span className="text-slate-500" style={{ color: '#64748b' }}>{t.company}:</span> <span className="font-medium text-slate-900" style={{ color: '#0f172a' }}>{store.displayName}</span></p>
-                <p className="flex justify-between"><span className="text-slate-500" style={{ color: '#64748b' }}>{t.legalName}:</span> <span className="font-medium text-slate-900" style={{ color: '#0f172a' }}>{store.legalName}</span></p>
-                <div className="flex justify-between items-start pt-2 mt-2 border-t border-slate-200/60" style={{ borderTop: '1px solid #e2e8f0' }}>
-                  <span className="text-slate-500 shrink-0 mr-4" style={{ color: '#64748b' }}>{t.address}:</span> 
-                  <span className="text-right text-slate-900 leading-relaxed whitespace-pre-line" style={{ color: '#0f172a' }}>{store.address}</span>
+
+          <div className="grid grid-cols-2 gap-12 mb-8 relative z-10">
+            {/* Seller Details */}
+            <div className="p-6 bg-slate-50/50 rounded-2xl border border-slate-100" style={{ border: '1px solid #f1f5f9' }}>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4" style={{ color: '#94a3b8' }}>
+                Seller Details
+              </p>
+
+              <div className="space-y-2">
+                <div className="space-y-1">
+                  <div className="text-[11px] font-semibold text-slate-600">Company name</div>
+                  <div className="text-[11px] font-medium text-slate-900 break-words">{store.displayName}</div>
                 </div>
-                <p className="flex justify-between pt-2 mt-2 border-t border-slate-200/60" style={{ borderTop: '1px solid #e2e8f0' }}><span className="text-slate-500" style={{ color: '#64748b' }}>{t.vatCode}:</span> <span className="font-mono font-medium text-slate-900" style={{ color: '#0f172a' }}>{store.vatNumber}</span></p>
+                <div className="space-y-1">
+                  <div className="text-[11px] font-semibold text-slate-600">Full address</div>
+                  <div className="text-[11px] whitespace-pre-line leading-relaxed text-slate-900 break-words">
+                    {store.address}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[11px] font-semibold text-slate-600">Phone</div>
+                  <div className="text-[11px] text-slate-900 break-words">{'-'}</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[11px] font-semibold text-slate-600">EU VAT Registration Number</div>
+                  <div className="text-[11px] font-mono text-slate-900 break-all">{store.vatNumber}</div>
+                </div>
               </div>
             </div>
-            
-            <div className="space-y-2">
-              <p className="text-[10px] font-bold text-[#2b78b5] uppercase tracking-widest mb-4" style={{ color: '#2b78b5' }}>{t.recipient}</p>
-              <div className="bg-slate-50 p-6 rounded-xl border border-slate-100 space-y-2 h-full" style={{ backgroundColor: '#f8fafc', border: '1px solid #f1f5f9' }}>
-                <p className="flex justify-between"><span className="text-slate-500" style={{ color: '#64748b' }}>{t.billedTo}:</span> <span className="font-bold text-slate-900" style={{ color: '#0f172a' }}>{customer?.name?.toUpperCase() || 'UNKNOWN'}</span></p>
-                <div className="flex justify-between items-start pt-2 mt-2 border-t border-slate-200/60" style={{ borderTop: '1px solid #e2e8f0' }}>
-                  <span className="text-slate-500 shrink-0 mr-4" style={{ color: '#64748b' }}>{t.address}:</span> 
-                  <span className="text-right text-slate-900 leading-relaxed" style={{ color: '#0f172a' }}>{customer?.shippingCountry}</span>
+
+            {/* Receiver Details */}
+            <div className="p-6 bg-slate-50/50 rounded-2xl border border-slate-100" style={{ border: '1px solid #f1f5f9' }}>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4" style={{ color: '#94a3b8' }}>
+                Receiver Details
+              </p>
+
+              <div className="space-y-2">
+                <div className="space-y-1">
+                  <div className="text-[11px] font-semibold text-slate-600">Client name</div>
+                  <div className="text-[11px] font-medium text-slate-900 break-words">{customer?.name ?? '-'}</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[11px] font-semibold text-slate-600">Client full address</div>
+                  <div className="text-[11px] leading-relaxed text-slate-900 break-words">
+                    <div>{customer?.shippingCountry ?? '-'}</div>
+                    {customer?.email ? <div className="break-all">{customer.email}</div> : null}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[11px] font-semibold text-slate-600">phone</div>
+                  <div className="text-[11px] text-slate-900 break-words">{customer?.phone ?? '-'}</div>
+                </div>
+                <div className="space-y-1">
+                  <div className="text-[11px] font-semibold text-slate-600">Client VAT Number</div>
+                  <div className="text-[11px] text-slate-900 break-words">{'-'}</div>
                 </div>
               </div>
             </div>
           </div>
-          
-          <table className="w-full mb-12">
+
+          {/* Order / Invoice / Date */}
+          <div className="space-y-3 mb-8 relative z-10">
+            {[
+              {
+                label: 'Order Number',
+                value: order.platformOrderId,
+              },
+              {
+                label: 'Invoice Number',
+                value: invoiceNo,
+              },
+              {
+                label: 'Invoice Date',
+                value: invoiceDate,
+              },
+            ].map((r, idx) => (
+              <div
+                key={idx}
+                className="flex justify-between items-baseline border-b border-slate-200/60 pb-3"
+                style={{ borderBottom: '1px solid #e2e8f0' }}
+              >
+                <span
+                  className="text-[10px] font-bold text-slate-400 uppercase tracking-widest"
+                  style={{ color: '#94a3b8' }}
+                >
+                  {r.label}
+                </span>
+                <span className="font-medium text-slate-900 font-mono text-sm whitespace-nowrap break-words" style={{ color: '#0f172a' }}>
+                  {r.value}
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Line items */}
+          <table className="w-full mb-8" style={{ borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                <th className="border-b-2 border-slate-900 py-3 px-4 text-left text-[10px] font-bold text-slate-500 uppercase tracking-widest w-1/2" style={{ borderBottom: '2px solid #0f172a', color: '#94a3b8' }}>{t.description}</th>
-                <th className="border-b-2 border-slate-900 py-3 px-4 text-center text-[10px] font-bold text-slate-500 uppercase tracking-widest" style={{ borderBottom: '2px solid #0f172a', color: '#94a3b8' }}>{t.qty}</th>
-                <th className="border-b-2 border-slate-900 py-3 px-4 text-right text-[10px] font-bold text-slate-500 uppercase tracking-widest" style={{ borderBottom: '2px solid #0f172a', color: '#94a3b8' }}>{t.price}<br/><span className="text-[8px] font-normal tracking-normal text-slate-400">(incl. {t.tax})</span></th>
-                <th className="border-b-2 border-slate-900 py-3 px-4 text-right text-[10px] font-bold text-slate-500 uppercase tracking-widest" style={{ borderBottom: '2px solid #0f172a', color: '#94a3b8' }}>{t.amount}<br/><span className="text-[8px] font-normal tracking-normal text-slate-400">(incl. {t.tax})</span></th>
+                <th className="text-left py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b-2 border-slate-900">
+                  Quantity
+                </th>
+                <th className="text-left py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b-2 border-slate-900">
+                  Description
+                </th>
+                <th className="text-right py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b-2 border-slate-900 w-36">
+                  Unit Price
+                </th>
+                <th className="text-right py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b-2 border-slate-900 w-36">
+                  Total Price
+                </th>
               </tr>
             </thead>
             <tbody className="text-sm">
-              {order.productTitles.map((title, i) => (
-                <tr key={i} className="group">
-                  <td className="border-b border-slate-100 py-4 px-4 text-left text-slate-900 font-medium group-last:border-0" style={{ borderBottom: '1px solid #f1f5f9', color: '#0f172a' }}>{title}</td>
-                  <td className="border-b border-slate-100 py-4 px-4 text-center text-slate-500 font-mono group-last:border-0" style={{ borderBottom: '1px solid #f1f5f9', color: '#64748b' }}>1</td>
-                  <td className="border-b border-slate-100 py-4 px-4 text-right text-slate-500 font-mono group-last:border-0" style={{ borderBottom: '1px solid #f1f5f9', color: '#64748b' }}>{order.amount} {order.currency}</td>
-                  <td className="border-b border-slate-100 py-4 px-4 text-right text-slate-900 font-bold font-mono group-last:border-0" style={{ borderBottom: '1px solid #f1f5f9', color: '#0f172a' }}>{order.amount} {order.currency}</td>
-                </tr>
-              ))}
-              <tr>
-                <td className="border-b border-slate-200 py-4 px-4 text-left text-slate-600" style={{ borderBottom: '1px solid #e2e8f0', color: '#475569' }}>{t.processingFee}</td>
-                <td className="border-b border-slate-200 py-4 px-4 text-center text-slate-500 font-mono" style={{ borderBottom: '1px solid #e2e8f0', color: '#64748b' }}>1</td>
-                <td className="border-b border-slate-200 py-4 px-4 text-right text-slate-500 font-mono" style={{ borderBottom: '1px solid #e2e8f0', color: '#64748b' }}>0.00 {order.currency}</td>
-                <td className="border-b border-slate-200 py-4 px-4 text-right text-slate-900 font-bold font-mono" style={{ borderBottom: '1px solid #e2e8f0', color: '#0f172a' }}>0.00 {order.currency}</td>
-              </tr>
+              {order.productTitles.map((title, i) => {
+                const lineTotalPrice = unitPriceBeforeTaxesAndShipping * qty;
+                return (
+                  <tr key={i}>
+                    <td className="py-4 text-center text-slate-500 border-b border-slate-100 font-mono" style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      {qty}
+                    </td>
+                    <td className="py-4 text-left text-slate-900 font-medium border-b border-slate-100" style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      {title}
+                    </td>
+                    <td className="py-4 text-right text-slate-500 border-b border-slate-100 font-mono" style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      {unitPriceBeforeTaxesAndShipping.toFixed(2)} {order.currency}
+                    </td>
+                    <td className="py-4 text-right text-slate-900 font-bold border-b border-slate-100 font-mono" style={{ borderBottom: '1px solid #f1f5f9' }}>
+                      {lineTotalPrice.toFixed(2)} {order.currency}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
 
-          <div className="flex justify-end">
-            <div className="w-96">
-              <div className="space-y-3">
-                <div className="flex justify-between items-baseline px-4 text-slate-600" style={{ color: '#475569' }}>
-                  <span className="text-xs uppercase tracking-wider">{t.subtotal}</span>
-                  <span className="font-mono font-medium">{ht} {order.currency}</span>
+          {/* Totals (align with template fields) */}
+          <div className="flex justify-end relative z-10">
+            <div className="w-[460px] max-w-full bg-slate-50 rounded-2xl p-6 border border-slate-100" style={{ border: '1px solid #f1f5f9' }}>
+              <div className="space-y-3 text-sm">
+                <div className="flex justify-between text-slate-500 items-baseline" style={{ color: '#64748b' }}>
+                  <span className="text-xs font-bold uppercase tracking-wider leading-snug break-words">Sum of total price</span>
+                  <span className="font-mono font-semibold">
+                    {subtotal.toFixed(2)} {order.currency}
+                  </span>
                 </div>
-                <div className="flex justify-between items-baseline px-4 text-slate-600" style={{ color: '#475569' }}>
-                  <span className="text-xs uppercase tracking-wider">{t.tax} (20%)</span>
-                  <span className="font-mono font-medium">{tva} {order.currency}</span>
+
+                <div className="flex justify-between text-slate-500 items-baseline" style={{ color: '#64748b' }}>
+                  <span className="text-xs font-bold uppercase tracking-wider leading-snug break-words">Subtotal</span>
+                  <span className="font-mono">{subtotal.toFixed(2)} {order.currency}</span>
                 </div>
-                <div className="flex justify-between items-baseline p-4 bg-[#2b78b5] text-white rounded-xl mt-4" style={{ backgroundColor: '#2b78b5', color: '#ffffff' }}>
-                  <span className="text-xs font-bold uppercase tracking-widest">{t.total} {order.currency}</span>
-                  <span className="text-2xl font-bold font-mono tracking-tight">{order.amount} {order.currency}</span>
+
+                <div className="flex justify-between text-slate-500 items-baseline" style={{ color: '#64748b' }}>
+                  <span className="text-xs font-bold uppercase tracking-wider leading-snug break-words">Cost of the shipping without taxes</span>
+                  <span className="font-mono">{shippingCostWithoutTaxes === 0 ? '-' : `${shippingCostWithoutTaxes.toFixed(2)} ${order.currency}`}</span>
+                </div>
+
+                <div className="flex justify-between text-slate-500 items-baseline" style={{ color: '#64748b' }}>
+                  <span className="text-xs font-bold uppercase tracking-wider leading-snug break-words">Taxes</span>
+                  <span className="font-mono">Always 0 (zero)</span>
+                </div>
+
+                <div className="flex justify-between items-baseline pt-4 border-t border-slate-200 mt-4" style={{ borderTop: '1px solid #e2e8f0' }}>
+                  <span className="text-xs font-bold text-slate-900 uppercase tracking-widest" style={{ color: '#0f172a' }}>
+                    Sum of subtotal plus shipping (mandatory)
+                  </span>
+                  <span className="text-2xl font-bold text-slate-900 tracking-tight font-mono" style={{ color: '#0f172a' }}>
+                    {totalAmount.toFixed(2)} {order.currency}
+                  </span>
+                </div>
+
+                {/* template also displays the final "Total Amount" line */}
+                <div className="flex justify-between items-baseline pt-3">
+                  <span className="text-xs font-bold text-slate-900 uppercase tracking-wider" style={{ color: '#0f172a' }}>
+                    Total Amount
+                  </span>
+                  <span className="font-mono font-medium text-slate-900" style={{ color: '#0f172a' }}>
+                    {totalAmount.toFixed(2)} {order.currency}
+                  </span>
                 </div>
               </div>
             </div>
@@ -536,10 +740,14 @@ export default function InvoicePreviewModal({
       <div className="bg-slate-100 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-slate-200 shrink-0">
-        <h2 className="text-lg font-bold text-slate-900">
-          发票预览 - {template === 'receipt' ? '简易模版' : template === 'standard' ? '标准模版' : '详细模版'}
-        </h2>
-          <button type="button" onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
+        <h2 className="text-lg font-bold text-slate-900">发票预览 - 统一模版</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            title="关闭"
+            aria-label="关闭"
+            className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>

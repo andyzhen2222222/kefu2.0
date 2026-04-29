@@ -293,7 +293,7 @@ export default function TicketDetail({
   const [editingInternalNoteDraft, setEditingInternalNoteDraft] = useState('');
   const [savingInternalNote, setSavingInternalNote] = useState(false);
   const [isReplyExpanded, setIsReplyExpanded] = useState(false);
-  const [invoiceTemplate, setInvoiceTemplate] = useState('standard');
+  const invoiceTemplate = 'commercial';
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
   const [isAfterSalesModalOpen, setIsAfterSalesModalOpen] = useState(false);
   const [editingAfterSalesRecord, setEditingAfterSalesRecord] = useState<AfterSalesRecord | undefined>(undefined);
@@ -2601,7 +2601,7 @@ export default function TicketDetail({
                       <div className="flex items-center gap-2">
                         <h4 className="text-sm font-bold text-slate-900">生成发票</h4>
                       </div>
-                      <p className="text-[11px] text-slate-500">请选择发票模版并预览</p>
+                      <p className="text-[11px] text-slate-500">当前仅提供统一发票模版</p>
                     </div>
                   </div>
                   {order.storeEntity && (
@@ -2615,41 +2615,6 @@ export default function TicketDetail({
                       </span>
                     </div>
                   )}
-                </div>
-
-                <div className="space-y-3">
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">选择发票模版</p>
-                  <div className="space-y-2">
-                    {[
-                      { id: 'receipt', name: '简易模版 (Receipt)', desc: '仅包含订单基本金额与商品摘要' },
-                      { id: 'standard', name: '标准模版 (Standard)', desc: '包含 VAT 明细、店铺主体与买家地址' },
-                      { id: 'commercial', name: '详细模版 (Commercial)', desc: '包含 HS Code、原产地等跨境报关信息' }
-                    ].map((tpl) => (
-                      <button
-                        key={tpl.id}
-                        onClick={() => setInvoiceTemplate(tpl.id)}
-                        className={cn(
-                          "w-full text-left p-3 rounded-xl border transition-all",
-                          invoiceTemplate === tpl.id 
-                            ? "bg-white border-[#F97316] shadow-md ring-1 ring-[#F97316]/10" 
-                            : "bg-slate-50 border-slate-200 hover:border-slate-300"
-                        )}
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <span className={cn("text-xs font-bold", invoiceTemplate === tpl.id ? "text-[#F97316]" : "text-slate-700")}>
-                            {tpl.name}
-                          </span>
-                          <div className={cn(
-                            "w-4 h-4 rounded-full border flex items-center justify-center transition-colors",
-                            invoiceTemplate === tpl.id ? "border-[#F97316] bg-[#F97316]" : "border-slate-300"
-                          )}>
-                            {invoiceTemplate === tpl.id && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                          </div>
-                        </div>
-                        <p className="text-[10px] text-slate-500 leading-normal">{tpl.desc}</p>
-                      </button>
-                    ))}
-                  </div>
                 </div>
 
                 <button

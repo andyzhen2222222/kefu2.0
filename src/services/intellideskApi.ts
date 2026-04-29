@@ -4,7 +4,7 @@
  * - 默认：未设 `VITE_API_BASE_URL` → 演示/mock 数据。
  * - 显式：`VITE_INTELLIDESK_DATA_SOURCE=mock` 时强制 mock（即使误配了 API 地址）。
  * - 联调：`VITE_INTELLIDESK_DATA_SOURCE=api` 且配置 `VITE_API_BASE_URL`。
- * 本地端口：`npm run dev` / `dev:mock` → UI :3000（mock）；`dev:api` / `dev:live` → UI :4001 代理到后端 :4000。
+ * 本地：`npm run dev` / `dev:mock` → mock UI（默认端口 5173，建议用 http://127.0.0.1:5173）；`dev:api` / `dev:live` → http://127.0.0.1:4001 代理 /api 到后端 :4000。
  */
 import { enrichOrderStoreEntityWithNezha } from '@/src/lib/shippingAddressText';
 import type { AfterSalesRecord, Customer, Message, Order, Ticket, User } from '@/src/types';
@@ -117,6 +117,26 @@ export async function intellideskHeadersWithAuth(
   return h;
 }
 
+/** 包装 fetch：网络层失败时抛出可操作提示（避免界面仅显示 “Failed to fetch”） */
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (
+      msg === 'Failed to fetch' ||
+      msg === 'Load failed' ||
+      /NetworkError|Failed to fetch/i.test(msg) ||
+      (e instanceof TypeError && /fetch|network/i.test(msg))
+    ) {
+      throw new Error(
+        '无法连接后端 API（Failed to fetch）。请确认：① 在 backend 目录执行并保持运行 npm run dev（默认端口 4000）；② 前端使用 npm run dev:api，浏览器打开 http://127.0.0.1:4001（Windows 上勿仅用 localhost，避免 IPv6）；③ .env.api 中 VITE_API_BASE_URL 与地址栏一致；④ 后端与 Vite 勿占用同一端口。也可运行 npm run diag:dev 做端口与健康检查。'
+      );
+    }
+    throw e instanceof Error ? e : new Error(msg);
+  }
+}
+
 /**
  * 联调：按登录框输入解析租户内用户（管理员用邮箱；坐席用与后台「登录账号」或邮箱一致的字符串）。
  * 对应后端 POST /api/auth/session-from-account（非 production 或 ALLOW_ACCOUNT_SESSION=1）。
@@ -130,11 +150,11 @@ export async function resolveSessionUserFromAccount(
   const headers = { 'Content-Type': 'application/json', 'X-Tenant-Id': tenantId };
 
   let url = resolveApiUrl('auth/session-from-account');
-  let res = await fetch(url, { method: 'POST', headers, body });
+  let res = await apiFetch(url, { method: 'POST', headers, body });
   if (res.status === 404) {
     const alt = resolveApiUrl('settings/session-from-account');
     if (alt !== url) {
-      res = await fetch(alt, { method: 'POST', headers, body });
+      res = await apiFetch(alt, { method: 'POST', headers, body });
       url = alt;
     }
   }
@@ -606,7 +626,7 @@ export async function fetchTicketsList(
       if (v != null) u.searchParams.set(k, v);
     }
   }
-  const res = await fetch(u.toString(), { headers: await intellideskHeadersWithAuth(tenantId, userId) });
+  const res = await apiFetch(u.toString(), { headers: await intellideskHeadersWithAuth(tenantId, userId) });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<TicketsListResponse>;
 }
@@ -639,7 +659,7 @@ export async function postInboxTicketsSync(
   };
   const t = body.token?.trim();
   if (t) payload.token = t;
-  const res = await fetch(`${base()}/api/sync/inbox-tickets`, {
+  const res = await apiFetch(`${base()}/api/sync/inbox-tickets`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(payload),
@@ -661,7 +681,7 @@ export async function postSyncOrderByPlatformId(
   const payload: Record<string, unknown> = { platformOrderId: body.platformOrderId.trim() };
   const t = body.token?.trim();
   if (t) payload.token = t;
-  const res = await fetch(`${base()}/api/sync/order-by-platform-id`, {
+  const res = await apiFetch(`${base()}/api/sync/order-by-platform-id`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(payload),
@@ -688,7 +708,7 @@ export async function fetchTicketDetail(
   if (opts?.includeMessages === false) {
     u.searchParams.set('includeMessages', '0');
   }
-  const res = await fetch(u.toString(), {
+  const res = await apiFetch(u.toString(), {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -709,7 +729,7 @@ export async function fetchTicketMessagesPage(
   if (opts?.limit != null && opts.limit > 0) {
     u.searchParams.set('limit', String(opts.limit));
   }
-  const res = await fetch(u.toString(), {
+  const res = await apiFetch(u.toString(), {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -736,7 +756,7 @@ export async function patchTicket(
   ticketId: string,
   body: PatchTicketBody
 ): Promise<ApiTicketRaw> {
-  const res = await fetch(`${base()}/api/tickets/${ticketId}`, {
+  const res = await apiFetch(`${base()}/api/tickets/${ticketId}`, {
     method: 'PATCH',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -763,7 +783,7 @@ export async function postTicketMessage(
   ticketId: string,
   body: PostTicketMessageBody
 ): Promise<ApiMessageRaw> {
-  const res = await fetch(`${base()}/api/tickets/${ticketId}/messages`, {
+  const res = await apiFetch(`${base()}/api/tickets/${ticketId}/messages`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -779,7 +799,7 @@ export async function patchTicketMessage(
   messageId: string,
   body: { content: string }
 ): Promise<ApiMessageRaw> {
-  const res = await fetch(`${base()}/api/tickets/${ticketId}/messages/${messageId}`, {
+  const res = await apiFetch(`${base()}/api/tickets/${ticketId}/messages/${messageId}`, {
     method: 'PATCH',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -794,7 +814,7 @@ export async function deleteTicketMessage(
   ticketId: string,
   messageId: string
 ): Promise<void> {
-  const res = await fetch(`${base()}/api/tickets/${ticketId}/messages/${messageId}`, {
+  const res = await apiFetch(`${base()}/api/tickets/${ticketId}/messages/${messageId}`, {
     method: 'DELETE',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
@@ -814,7 +834,7 @@ export async function fetchAgentSeats(
   tenantId: string,
   userId: string | undefined
 ): Promise<AgentSeatRow[]> {
-  const res = await fetch(`${base()}/api/settings/agent-seats`, {
+  const res = await apiFetch(`${base()}/api/settings/agent-seats`, {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -829,7 +849,7 @@ export async function fetchOrderDetail(
 ): Promise<ApiOrderRaw> {
   const u = new URL(`${base()}/api/orders/${encodeURIComponent(orderId)}`);
   if (opts?.upstreamEnrich) u.searchParams.set('upstreamEnrich', '1');
-  const res = await fetch(u.toString(), {
+  const res = await apiFetch(u.toString(), {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -845,7 +865,7 @@ export async function fetchOrderByPlatformOrderId(
   const u = new URL(`${base()}/api/orders`);
   u.searchParams.set('platformOrderId', platformOrderId.trim());
   if (opts?.upstreamEnrich !== false) u.searchParams.set('upstreamEnrich', '1');
-  const res = await fetch(u.toString(), { headers: await intellideskHeadersWithAuth(tenantId, userId) });
+  const res = await apiFetch(u.toString(), { headers: await intellideskHeadersWithAuth(tenantId, userId) });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<ApiOrderRaw>;
 }
@@ -858,7 +878,7 @@ export async function postOrderLogisticsSync(
 ): Promise<{ ok: boolean; message?: string }> {
   const u = new URL(`${base()}/api/orders/${orderId}/logistics/sync`);
   if (force) u.searchParams.set('force', '1');
-  const res = await fetch(u.toString(), {
+  const res = await apiFetch(u.toString(), {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
@@ -898,7 +918,7 @@ export async function fetchDashboardInboxMetrics(
   tenantId: string,
   userId: string | undefined
 ): Promise<DashboardInboxMetrics> {
-  const res = await fetch(`${base()}/api/dashboard/inbox-metrics`, {
+  const res = await apiFetch(`${base()}/api/dashboard/inbox-metrics`, {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -909,7 +929,7 @@ export async function fetchDashboardStructure(
   tenantId: string,
   userId: string | undefined
 ): Promise<DashboardStructure> {
-  const res = await fetch(`${base()}/api/dashboard/structure`, {
+  const res = await apiFetch(`${base()}/api/dashboard/structure`, {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -923,7 +943,7 @@ export async function fetchDashboardTrends(
 ): Promise<{ range: string; series: TrendPoint[] }> {
   const u = new URL(`${base()}/api/dashboard/trends`);
   u.searchParams.set('range', range === '30d' ? '30d' : '7d');
-  const res = await fetch(u.toString(), { headers: await intellideskHeadersWithAuth(tenantId, userId) });
+  const res = await apiFetch(u.toString(), { headers: await intellideskHeadersWithAuth(tenantId, userId) });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<{ range: string; series: TrendPoint[] }>;
 }
@@ -942,7 +962,7 @@ export async function fetchDashboardAiContext(
   tenantId: string,
   userId: string | undefined
 ): Promise<DashboardAiContext> {
-  const res = await fetch(`${base()}/api/dashboard/ai-context`, {
+  const res = await apiFetch(`${base()}/api/dashboard/ai-context`, {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -1020,7 +1040,7 @@ export async function fetchAfterSalesList(
   const u = new URL(`${base()}/api/after-sales`);
   if (qs?.ticketId) u.searchParams.set('ticketId', qs.ticketId);
   if (qs?.orderId) u.searchParams.set('orderId', qs.orderId);
-  const res = await fetch(u.toString(), { headers: await intellideskHeadersWithAuth(tenantId, userId) });
+  const res = await apiFetch(u.toString(), { headers: await intellideskHeadersWithAuth(tenantId, userId) });
   if (!res.ok) throw new Error(await parseError(res));
   const rows = (await res.json()) as ApiAfterSalesRaw[];
   return rows.map(mapAfterSalesToUi);
@@ -1050,7 +1070,7 @@ export async function createAfterSalesRecord(
   userId: string | undefined,
   body: CreateAfterSalesBody
 ): Promise<AfterSalesRecord> {
-  const res = await fetch(`${base()}/api/after-sales`, {
+  const res = await apiFetch(`${base()}/api/after-sales`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -1079,7 +1099,7 @@ export async function patchAfterSalesRecord(
   id: string,
   body: PatchAfterSalesBody
 ): Promise<AfterSalesRecord> {
-  const res = await fetch(`${base()}/api/after-sales/${id}`, {
+  const res = await apiFetch(`${base()}/api/after-sales/${id}`, {
     method: 'PATCH',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -1093,7 +1113,7 @@ export async function deleteAfterSalesRecord(
   userId: string | undefined,
   id: string
 ): Promise<void> {
-  const res = await fetch(`${base()}/api/after-sales/${id}`, {
+  const res = await apiFetch(`${base()}/api/after-sales/${id}`, {
     method: 'DELETE',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
@@ -1105,7 +1125,7 @@ export async function postAiSummarize(
   userId: string | undefined,
   ticketId: string
 ): Promise<{ summary: string }> {
-  const res = await fetch(`${base()}/api/ai/summarize`, {
+  const res = await apiFetch(`${base()}/api/ai/summarize`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify({ ticketId }),
@@ -1119,7 +1139,7 @@ export async function postAiSuggestReply(
   userId: string | undefined,
   ticketId: string
 ): Promise<{ suggestion: string; platformSuggestion?: string }> {
-  const res = await fetch(`${base()}/api/ai/suggest-reply`, {
+  const res = await apiFetch(`${base()}/api/ai/suggest-reply`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify({ ticketId }),
@@ -1134,7 +1154,7 @@ export async function postAiPolish(
   ticketId: string,
   draftText: string
 ): Promise<{ polished: string }> {
-  const res = await fetch(`${base()}/api/ai/polish`, {
+  const res = await apiFetch(`${base()}/api/ai/polish`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify({ ticketId, draftText }),
@@ -1148,7 +1168,7 @@ export async function postAiRecognizeAfterSales(
   userId: string | undefined,
   body: { buyerFeedback?: string; ticketId?: string; maxRefund?: number; currency?: string }
 ): Promise<{ result: Record<string, unknown> }> {
-  const res = await fetch(`${base()}/api/ai/recognize-after-sales`, {
+  const res = await apiFetch(`${base()}/api/ai/recognize-after-sales`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -1162,7 +1182,7 @@ export async function postAiSummarizeMessages(
   userId: string | undefined,
   messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
 ): Promise<{ summary: string }> {
-  const res = await fetch(`${base()}/api/ai/summarize-messages`, {
+  const res = await apiFetch(`${base()}/api/ai/summarize-messages`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify({ messages }),
@@ -1176,7 +1196,7 @@ export async function postAiTranslate(
   userId: string | undefined,
   body: { text: string; targetLang: string; sourceLang?: string }
 ): Promise<{ translated: string }> {
-  const res = await fetch(`${base()}/api/ai/translate`, {
+  const res = await apiFetch(`${base()}/api/ai/translate`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -1190,7 +1210,7 @@ export async function postAiBatchTranslate(
   userId: string | undefined,
   body: { messages: { id: string; content: string }[]; targetLang: string }
 ): Promise<{ results: Record<string, string> }> {
-  const res = await fetch(`${base()}/api/ai/batch-translate`, {
+  const res = await apiFetch(`${base()}/api/ai/batch-translate`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -1204,7 +1224,7 @@ export async function postAiClassifyIntent(
   userId: string | undefined,
   ticketId: string
 ): Promise<{ intent: string }> {
-  const res = await fetch(`${base()}/api/ai/classify-intent`, {
+  const res = await apiFetch(`${base()}/api/ai/classify-intent`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify({ ticketId }),
@@ -1218,7 +1238,7 @@ export async function postAiClassifySentiment(
   userId: string | undefined,
   ticketId: string
 ): Promise<{ sentiment: string }> {
-  const res = await fetch(`${base()}/api/ai/classify-sentiment`, {
+  const res = await apiFetch(`${base()}/api/ai/classify-sentiment`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify({ ticketId }),
@@ -1232,7 +1252,7 @@ export async function postAiTicketInsight(
   userId: string | undefined,
   ticketId: string
 ): Promise<{ summary: string; intent: string; sentiment: string }> {
-  const res = await fetch(`${base()}/api/ai/ticket-insight`, {
+  const res = await apiFetch(`${base()}/api/ai/ticket-insight`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify({ ticketId }),
@@ -1254,7 +1274,7 @@ export async function createAgentSeat(
   userId: string | undefined,
   body: CreateAgentSeatBody
 ): Promise<AgentSeatRow> {
-  const res = await fetch(`${base()}/api/settings/agent-seats`, {
+  const res = await apiFetch(`${base()}/api/settings/agent-seats`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -1268,7 +1288,7 @@ export async function deleteAgentSeat(
   userId: string | undefined,
   seatId: string
 ): Promise<void> {
-  const res = await fetch(`${base()}/api/settings/agent-seats/${seatId}`, {
+  const res = await apiFetch(`${base()}/api/settings/agent-seats/${seatId}`, {
     method: 'DELETE',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
@@ -1291,7 +1311,7 @@ export async function fetchSlaRules(
   tenantId: string,
   userId: string | undefined
 ): Promise<ApiSlaRuleRow[]> {
-  const res = await fetch(`${base()}/api/settings/sla-rules`, {
+  const res = await apiFetch(`${base()}/api/settings/sla-rules`, {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -1312,7 +1332,7 @@ export async function createSlaRule(
   userId: string | undefined,
   body: CreateSlaRuleBody
 ): Promise<ApiSlaRuleRow> {
-  const res = await fetch(`${base()}/api/settings/sla-rules`, {
+  const res = await apiFetch(`${base()}/api/settings/sla-rules`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -1336,7 +1356,7 @@ export async function patchSlaRule(
   id: string,
   body: PatchSlaRuleBody
 ): Promise<ApiSlaRuleRow> {
-  const res = await fetch(`${base()}/api/settings/sla-rules/${id}`, {
+  const res = await apiFetch(`${base()}/api/settings/sla-rules/${id}`, {
     method: 'PATCH',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -1350,7 +1370,7 @@ export async function deleteSlaRule(
   userId: string | undefined,
   id: string
 ): Promise<void> {
-  const res = await fetch(`${base()}/api/settings/sla-rules/${id}`, {
+  const res = await apiFetch(`${base()}/api/settings/sla-rules/${id}`, {
     method: 'DELETE',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
@@ -1372,7 +1392,7 @@ export async function fetchAutoReplyRules(
   tenantId: string,
   userId: string | undefined
 ): Promise<ApiAutoReplyRuleRow[]> {
-  const res = await fetch(`${base()}/api/settings/auto-reply-rules`, {
+  const res = await apiFetch(`${base()}/api/settings/auto-reply-rules`, {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -1394,7 +1414,7 @@ export async function createAutoReplyRule(
   userId: string | undefined,
   body: CreateAutoReplyRuleBody
 ): Promise<ApiAutoReplyRuleRow> {
-  const res = await fetch(`${base()}/api/settings/auto-reply-rules`, {
+  const res = await apiFetch(`${base()}/api/settings/auto-reply-rules`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -1419,7 +1439,7 @@ export async function patchAutoReplyRule(
   id: string,
   body: PatchAutoReplyRuleBody
 ): Promise<ApiAutoReplyRuleRow> {
-  const res = await fetch(`${base()}/api/settings/auto-reply-rules/${id}`, {
+  const res = await apiFetch(`${base()}/api/settings/auto-reply-rules/${id}`, {
     method: 'PATCH',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -1433,7 +1453,7 @@ export async function deleteAutoReplyRule(
   userId: string | undefined,
   id: string
 ): Promise<void> {
-  const res = await fetch(`${base()}/api/settings/auto-reply-rules/${id}`, {
+  const res = await apiFetch(`${base()}/api/settings/auto-reply-rules/${id}`, {
     method: 'DELETE',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
@@ -1460,7 +1480,7 @@ export async function fetchRoutingRuleOptions(
   tenantId: string,
   userId: string | undefined
 ): Promise<ApiRoutingRuleOptions> {
-  const res = await fetch(`${base()}/api/settings/routing-rule-options`, {
+  const res = await apiFetch(`${base()}/api/settings/routing-rule-options`, {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -1471,7 +1491,7 @@ export async function fetchTicketRoutingRules(
   tenantId: string,
   userId: string | undefined
 ): Promise<ApiTicketRoutingRuleRow[]> {
-  const res = await fetch(`${base()}/api/settings/ticket-routing-rules`, {
+  const res = await apiFetch(`${base()}/api/settings/ticket-routing-rules`, {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -1491,7 +1511,7 @@ export async function createTicketRoutingRule(
   userId: string | undefined,
   body: CreateTicketRoutingRuleBody
 ): Promise<ApiTicketRoutingRuleRow> {
-  const res = await fetch(`${base()}/api/settings/ticket-routing-rules`, {
+  const res = await apiFetch(`${base()}/api/settings/ticket-routing-rules`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -1514,7 +1534,7 @@ export async function patchTicketRoutingRule(
   id: string,
   body: PatchTicketRoutingRuleBody
 ): Promise<ApiTicketRoutingRuleRow> {
-  const res = await fetch(`${base()}/api/settings/ticket-routing-rules/${id}`, {
+  const res = await apiFetch(`${base()}/api/settings/ticket-routing-rules/${id}`, {
     method: 'PATCH',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -1528,7 +1548,7 @@ export async function deleteTicketRoutingRule(
   userId: string | undefined,
   id: string
 ): Promise<void> {
-  const res = await fetch(`${base()}/api/settings/ticket-routing-rules/${id}`, {
+  const res = await apiFetch(`${base()}/api/settings/ticket-routing-rules/${id}`, {
     method: 'DELETE',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
@@ -1584,7 +1604,7 @@ export async function fetchMotherSyncBundle(
   tenantId: string,
   userId: string | undefined
 ): Promise<ApiMotherSyncBundle> {
-  const res = await fetch(`${base()}/api/settings/mother-sync`, {
+  const res = await apiFetch(`${base()}/api/settings/mother-sync`, {
     headers: await intellideskHeadersWithAuth(tenantId, userId),
   });
   if (!res.ok) throw new Error(await parseError(res));
@@ -1612,7 +1632,7 @@ export async function patchMotherSyncSettings(
   userId: string | undefined,
   body: PatchMotherSyncSettingsBody
 ): Promise<ApiMotherSyncBundle> {
-  const res = await fetch(`${base()}/api/settings/mother-sync`, {
+  const res = await apiFetch(`${base()}/api/settings/mother-sync`, {
     method: 'PATCH',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),
@@ -1639,7 +1659,7 @@ export async function patchChannelMotherSync(
   channelId: string,
   body: PatchChannelMotherSyncBody
 ): Promise<ApiChannelSyncRow> {
-  const res = await fetch(`${base()}/api/settings/channels/${channelId}/mother-sync`, {
+  const res = await apiFetch(`${base()}/api/settings/channels/${channelId}/mother-sync`, {
     method: 'PATCH',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
     body: JSON.stringify(body),

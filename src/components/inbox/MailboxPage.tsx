@@ -106,66 +106,6 @@ function mockTranslateToPlatformLanguage(text: string, channelId: string, platfo
 
 // Mock Data（同店铺多条时：字段最全、时间最新的排在该店铺首位 → 列表按时间降序）
 const MOCK_TICKETS: Ticket[] = [
-  {
-    id: 'T-F001',
-    channelId: 'Amazon US',
-    customerId: 'C-F001',
-    orderId: 'ORD-F001',
-    status: TicketStatus.NEW,
-    priority: 1,
-    sentiment: Sentiment.ANGRY,
-    intent: '要求退款',
-    subject: '[示例数据] 商品到达时已损坏 - 需要立即退款',
-    subjectOriginal: '[Mock] Item arrived damaged - need a refund immediately',
-    createdAt: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-    updatedAt: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-    slaDueAt: new Date(Date.now() + 1000 * 60 * 60 * 2).toISOString(),
-    isImportant: true,
-    isFavorite: true,
-    isShared: true,
-    tags: ['退款', '损坏', 'VIP客户'],
-    messageProcessingStatus: 'unread',
-  },
-  {
-    id: 'T-F002',
-    channelId: 'eBay UK',
-    customerId: 'C-F002',
-    orderId: 'ORD-F002',
-    status: TicketStatus.TODO,
-    priority: 2,
-    sentiment: Sentiment.ANXIOUS,
-    intent: '查询物流',
-    subject: '[示例数据] 我的订单在哪里？物流信息未更新',
-    subjectOriginal: '[Mock] Where is my order? Tracking has not updated',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 1).toISOString(),
-    slaDueAt: new Date(Date.now() + 1000 * 60 * 60 * 4).toISOString(),
-    isImportant: false,
-    isFavorite: true,
-    isShared: false,
-    tags: ['物流', '追踪'],
-    messageProcessingStatus: 'unreplied',
-  },
-  {
-    id: 'T-F003',
-    channelId: 'Shopify Main Store',
-    customerId: 'C-F003',
-    orderId: 'ORD-F003',
-    status: TicketStatus.WAITING,
-    priority: 3,
-    sentiment: Sentiment.JOYFUL,
-    intent: '产品咨询',
-    subject: '[示例数据] 非常喜欢这个产品！有蓝色的吗？',
-    subjectOriginal: '[Mock] I really love this product! Do you have it in blue?',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-    updatedAt: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
-    slaDueAt: new Date(Date.now() + 1000 * 60 * 60 * 12).toISOString(),
-    isImportant: false,
-    isFavorite: false,
-    isShared: false,
-    tags: ['售前', '产品信息'],
-    messageProcessingStatus: 'replied',
-  },
   /** Amazon US · 演示「完整字段」置顶：未读红点 + 短 SLA + 退款单 + 愤怒 + 未回复 */
   {
     id: 'T-1001',
@@ -619,75 +559,6 @@ const MOCK_MESSAGES: Record<string, Message[]> = {
       createdAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
     },
   ],
-  /** 未付费模式：三条示例工单会话（字段与主列表对应） */
-  'T-F001': [
-    {
-      id: 'M-F1-1',
-      ticketId: 'T-F001',
-      senderId: 'VIP Customer A',
-      senderType: 'customer',
-      content:
-        '[示例数据] The item arrived damaged. I need a full refund to my original payment method. Order ref: F001-MOCK-REFUND.',
-      translatedContent:
-        '[示例数据] 商品到达时已损坏。我需要全额退款至原支付方式。订单参考：F001-MOCK-REFUND。',
-      createdAt: new Date(Date.now() - 1000 * 60 * 20).toISOString(),
-    },
-    {
-      id: 'M-F1-2',
-      ticketId: 'T-F001',
-      senderId: 'Amazon 账户经理',
-      senderType: 'manager',
-      content:
-        '[示例数据] Please respond within SLA. Buyer attached photos; account health may be affected if unresolved.',
-      translatedContent: '[示例数据] 请在 SLA 内回复。买家已上传照片；若未解决可能影响账户绩效。',
-      createdAt: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
-    },
-  ],
-  'T-F002': [
-    {
-      id: 'M-F2-1',
-      ticketId: 'T-F002',
-      senderId: 'Loyal Buyer B',
-      senderType: 'customer',
-      content:
-        "[示例数据] Tracking hasn't updated for 3 days. Can you escalate with Yodel? Tracking: JD000222MOCK.",
-      translatedContent: '[示例数据] 物流 3 天未更新。能否向 Yodel 升级？单号：JD000222MOCK。',
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString(),
-    },
-    {
-      id: 'M-F2-2',
-      ticketId: 'T-F002',
-      senderId: '客服',
-      senderType: 'agent',
-      content: '[示例数据] We have opened a carrier investigation and will update you within 24 hours.',
-      sentPlatformText:
-        '[🇬🇧 English] [Mock] We have opened a carrier investigation and will update you within 24 hours.',
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-      deliveryStatus: 'success',
-    },
-  ],
-  'T-F003': [
-    {
-      id: 'M-F3-1',
-      ticketId: 'T-F003',
-      senderId: 'New Shopper C',
-      senderType: 'customer',
-      content: '[示例数据] Do you have this SKU in blue? I want to confirm before I pay.',
-      translatedContent: '[示例数据] 这款 SKU 有蓝色吗？付款前想确认一下。',
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 30).toISOString(),
-    },
-    {
-      id: 'M-F3-2',
-      ticketId: 'T-F003',
-      senderId: 'AI 助手',
-      senderType: 'ai',
-      content:
-        '[示例数据] Yes — blue variant SKU-MOCK-3-BLU is in stock. Would you like a checkout link?',
-      translatedContent: '[示例数据] 有货——蓝色款 SKU-MOCK-3-BLU 有库存。需要发结账链接吗？',
-      createdAt: new Date(Date.now() - 1000 * 60 * 60 * 28).toISOString(),
-      deliveryStatus: 'success',
-    },
-  ],
 };
 
 const MOCK_ORDERS: Record<string, Order> = {
@@ -1067,70 +938,6 @@ const MOCK_ORDERS: Record<string, Order> = {
     logisticsStatus: LogisticsStatus.DELIVERED,
     logisticsEvents: [],
   },
-  'ORD-F001': {
-    id: 'ORD-F001',
-    platformOrderId: 'F001-MOCK-REFUND',
-    customerId: 'C-F001',
-    channelId: 'Amazon US',
-    skuList: ['SKU-MOCK-1'],
-    productTitles: ['Mock Product 1 - Premium Edition'],
-    amount: 129.99,
-    currency: 'USD',
-    orderStatus: 'refund_pending',
-    shippingStatus: 'Delivered',
-    trackingNumber: 'TBA0001MOCK',
-    deliveryEta: 'Apr 20, 2026',
-    paymentStatus: 'Paid',
-    carrier: 'Amazon Logistics',
-    hasVatInfo: false,
-    logisticsStatus: LogisticsStatus.DELIVERED,
-    logisticsEvents: []
-  },
-  'ORD-F002': {
-    id: 'ORD-F002',
-    platformOrderId: 'F002-MOCK-TRACKING',
-    customerId: 'C-F002',
-    channelId: 'eBay UK',
-    skuList: ['SKU-MOCK-2'],
-    productTitles: ['Mock Product 2 - Standard'],
-    amount: 89.50,
-    currency: 'GBP',
-    orderStatus: 'shipped',
-    shippingStatus: 'In Transit',
-    trackingNumber: 'JD000222MOCK',
-    deliveryEta: 'Apr 25, 2026',
-    paymentStatus: 'Paid',
-    carrier: 'Yodel',
-    hasVatInfo: true,
-    storeEntity: {
-      id: 'SE-MOCK',
-      legalName: 'Mock Entity Ltd.',
-      displayName: 'Mock eBay Store',
-      address: '123 Mock Street, London, UK',
-      vatNumber: 'GB123456789'
-    },
-    logisticsStatus: LogisticsStatus.IN_TRANSIT,
-    logisticsEvents: []
-  },
-  'ORD-F003': {
-    id: 'ORD-F003',
-    platformOrderId: 'F003-MOCK-INQUIRY',
-    customerId: 'C-F003',
-    channelId: 'Shopify Main Store',
-    skuList: ['SKU-MOCK-3'],
-    productTitles: ['Mock Product 3 - Blue Variant'],
-    amount: 45.00,
-    currency: 'USD',
-    orderStatus: 'pending',
-    shippingStatus: 'Unshipped',
-    trackingNumber: undefined,
-    deliveryEta: 'May 01, 2026',
-    paymentStatus: 'Unpaid',
-    carrier: undefined,
-    hasVatInfo: false,
-    logisticsStatus: LogisticsStatus.NOT_FOUND,
-    logisticsEvents: []
-  }
 };
 
 const MOCK_CUSTOMERS: Record<string, Customer> = {
@@ -1266,42 +1073,6 @@ const MOCK_CUSTOMERS: Record<string, Customer> = {
     latestPurchaseAt: '2026-03-26T10:00:00Z',
     customerSince: '2026-03-26T00:00:00Z'
   },
-  'C-F001': {
-    id: 'C-F001',
-    name: 'VIP Customer A',
-    email: 'vip.a@example.com',
-    shippingCountry: 'USA',
-    sentiment: Sentiment.ANGRY,
-    segments: ['VIP', 'Refunded'],
-    totalOrderValue: 1250.0,
-    ordersCount: 12,
-    latestPurchaseAt: '2026-03-25T10:00:00Z',
-    customerSince: '2024-01-15T00:00:00Z'
-  },
-  'C-F002': {
-    id: 'C-F002',
-    name: 'Loyal Buyer B',
-    email: 'loyal.b@example.co.uk',
-    shippingCountry: 'UK',
-    sentiment: Sentiment.ANXIOUS,
-    segments: ['Returning'],
-    totalOrderValue: 320.0,
-    ordersCount: 3,
-    latestPurchaseAt: '2026-03-20T10:00:00Z',
-    customerSince: '2025-06-12T00:00:00Z'
-  },
-  'C-F003': {
-    id: 'C-F003',
-    name: 'New Shopper C',
-    email: 'shopper.c@example.com',
-    shippingCountry: 'US',
-    sentiment: Sentiment.JOYFUL,
-    segments: ['New Customer'],
-    totalOrderValue: 45.0,
-    ordersCount: 1,
-    latestPurchaseAt: '2026-03-26T10:00:00Z',
-    customerSince: '2026-03-26T00:00:00Z'
-  }
 };
 
 function cloneMockMessages(): Record<string, Message[]> {

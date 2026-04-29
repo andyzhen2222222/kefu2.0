@@ -17,7 +17,7 @@ function Test-PortListen([int]$Port) {
 }
 
 Write-Host "`n[Ports]" -ForegroundColor Cyan
-$null = Test-PortListen 3000
+$null = Test-PortListen 5173
 $null = Test-PortListen 4000
 $null = Test-PortListen 4001
 
@@ -51,7 +51,7 @@ Write-Host "  5) 手机/局域网访问本机：防火墙需允许 Node/Vite 入
 
 Write-Host "`n[Env hints]" -ForegroundColor Cyan
 Write-Host "  API 联调: npm run dev:api  -> http://localhost:4001 (proxy /api -> 4000)" -ForegroundColor White
-Write-Host "  Mock:     npm run dev       -> http://localhost:3000" -ForegroundColor White
+Write-Host "  Mock:     npm run dev       -> http://127.0.0.1:5173（Windows 建议勿只用 localhost）" -ForegroundColor White
 Write-Host "  登录:     使用登录页演示账号写入 mockUser；API 模式若 Firebase 卡住请等超时或清缓存" -ForegroundColor White
 if (Test-Path -LiteralPath (Join-Path $root '.env.api')) {
   Write-Host "  .env.api present" -ForegroundColor Green
