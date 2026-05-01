@@ -9,6 +9,8 @@ import {
   postAiSuggestReply,
   postAiSummarize,
   postAiSummarizeMessages,
+  type AiPolishTone,
+  type AiPolishStyle,
 } from "./intellideskApi";
 import { frontendLlmComplete } from "@/src/lib/llmClient";
 
@@ -257,29 +259,69 @@ export async function generateReplySuggestion(
   };
 }
 
+/** 与后端 `buildPolishToneBlock` / `buildPolishStyleBlock` 文案保持一致 */
+function frontendPolishToneBlock(tone: AiPolishTone): string {
+  switch (tone) {
+    case 'warm_friendly':
+      return '【语气】温馨友好：日常咨询与一般安抚；亲切、有同理心，避免生硬套话，不过度煽情。';
+    case 'professional_formal':
+      return '【语气】专业正式：技术说明、账户/订单规则、流程与权限；客观、准确、可核对，少用口语与表情化表达。';
+    case 'concise_clear':
+      return '【语气】简洁干练：只保留结论、关键事实与下一步动作；短句为主，删冗余客套与重复信息。';
+    case 'apologetic':
+      return '【语气】诚恳致歉：承认我方疏失、延误或体验不佳；真诚道歉并给出可执行的补救或明确跟进，不辩解、不甩锅。';
+    case 'auto':
+    default:
+      return '【语气】请根据工单主题与客户近期表述自动选择合适语气。若情境不够明确，则：请使用友好的语气，简洁且不失温暖。';
+  }
+}
+
+function frontendPolishStyleBlock(style: AiPolishStyle): string {
+  switch (style) {
+    case 'reassure':
+      return '【风格】安抚客户：当客户有抱怨或困惑时，使用温和的措辞安抚情绪。';
+    case 'solution_oriented':
+      return '【风格】解决方案导向：提供实际的解决方案并承诺跟进。';
+    case 'auto':
+    default:
+      return '【风格】请根据不同情境自动优化表达方式。若情境不够明确，则：将语言优化为直接解决客户问题，避免过多的修饰和选项。';
+  }
+}
+
 export async function generateReplyPolish(
   currentText: string,
   ticket: Ticket,
   messages: Message[],
   order?: Order,
-  authUserId?: string | null
+  authUserId?: string | null,
+  polish?: { tone?: AiPolishTone; style?: AiPolishStyle }
 ): Promise<string | null> {
   if (!currentText.trim()) return null;
+
+  const tone = polish?.tone ?? 'auto';
+  const style = polish?.style ?? 'auto';
 
   if (intellideskConfigured()) {
     try {
       const tenantId = intellideskTenantId();
       const userId = intellideskUserIdForApi(authUserId);
-      const { polished } = await postAiPolish(tenantId, userId, ticket.id, currentText);
+      const { polished } = await postAiPolish(tenantId, userId, ticket.id, currentText, {
+        tone,
+        style,
+      });
       return polished?.trim() || null;
     } catch (error) {
       console.error("AI Reply Polish Error (API):", error);
     }
   }
 
+  const extraZh = `${frontendPolishToneBlock(tone)}\n\n${frontendPolishStyleBlock(style)}`;
+
   const prompt = `
-      You are a professional customer service assistant. Your task is to polish and rewrite the following draft reply to make it more professional, empathetic, and clear, while maintaining the original meaning.
-      
+      You are a professional customer service assistant. Polish and rewrite the following draft while preserving meaning. Follow the tone and style requirements given in Chinese below exactly.
+
+      ${extraZh}
+
       Original Draft: 
       """
       ${currentText}
@@ -292,10 +334,7 @@ export async function generateReplyPolish(
       Conversation History:
       ${messages.map(m => `${m.senderType.toUpperCase()}: ${m.content}`).join('\n')}
       
-      Task:
-      Rewrite the draft to be more professional and helpful. Keep it concise.
-      
-      Return ONLY the polished reply text.
+      Return ONLY the polished reply text (same language as the draft unless context clearly requires otherwise).
     `;
 
   const out = await frontendLlmComplete(prompt);

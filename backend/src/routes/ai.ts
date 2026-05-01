@@ -259,9 +259,49 @@ ${text}
   }
 });
 
+/** 五种语气互不重叠：自动 / 亲切日常 / 专业严谨 / 极简行动 / 致歉补救 */
+const polishToneSchema = z.enum([
+  'auto',
+  'warm_friendly',
+  'professional_formal',
+  'concise_clear',
+  'apologetic',
+]);
+const polishStyleSchema = z.enum(['auto', 'reassure', 'solution_oriented']);
+
+function buildPolishToneBlock(tone: z.infer<typeof polishToneSchema>): string {
+  switch (tone) {
+    case 'warm_friendly':
+      return '【语气】温馨友好：日常咨询与一般安抚；亲切、有同理心，避免生硬套话，不过度煽情。';
+    case 'professional_formal':
+      return '【语气】专业正式：技术说明、账户/订单规则、流程与权限；客观、准确、可核对，少用口语与表情化表达。';
+    case 'concise_clear':
+      return '【语气】简洁干练：只保留结论、关键事实与下一步动作；短句为主，删冗余客套与重复信息。';
+    case 'apologetic':
+      return '【语气】诚恳致歉：承认我方疏失、延误或体验不佳；真诚道歉并给出可执行的补救或明确跟进，不辩解、不甩锅。';
+    case 'auto':
+    default:
+      return '【语气】请根据工单主题与客户近期表述自动选择合适语气。若情境不够明确，则：请使用友好的语气，简洁且不失温暖。';
+  }
+}
+
+function buildPolishStyleBlock(style: z.infer<typeof polishStyleSchema>): string {
+  switch (style) {
+    case 'reassure':
+      return '【风格】安抚客户：当客户有抱怨或困惑时，使用温和的措辞安抚情绪。';
+    case 'solution_oriented':
+      return '【风格】解决方案导向：提供实际的解决方案并承诺跟进。';
+    case 'auto':
+    default:
+      return '【风格】请根据不同情境自动优化表达方式。若情境不够明确，则：将语言优化为直接解决客户问题，避免过多的修饰和选项。';
+  }
+}
+
 const polishBody = z.object({
   ticketId: z.string().uuid(),
   draftText: z.string().min(1).max(50_000),
+  tone: polishToneSchema.optional(),
+  style: polishStyleSchema.optional(),
 });
 
 router.post('/polish', async (req: TenantRequest, res) => {
@@ -288,8 +328,14 @@ router.post('/polish', async (req: TenantRequest, res) => {
     return;
   }
 
+  const tone = parsed.data.tone ?? 'auto';
+  const style = parsed.data.style ?? 'auto';
   const convo = ticket.messages.map((m) => `${m.senderType}: ${m.content}`).join('\n');
-  const prompt = `你是专业客服润色助手。在保持原意的前提下，将下列草稿改写得更专业、有同理心、表达清晰，可直接发给买家。只输出润色后的正文，不要解释。
+  const prompt = `你是专业客服润色助手。在保持原意的前提下改写下列草稿，使其表达清晰、可直接发给买家。严格遵守下列语气与风格要求。只输出润色后的正文，不要解释。
+
+${buildPolishToneBlock(tone)}
+
+${buildPolishStyleBlock(style)}
 
 草稿：
 """

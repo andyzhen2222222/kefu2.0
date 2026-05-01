@@ -1148,16 +1148,28 @@ export async function postAiSuggestReply(
   return res.json() as Promise<{ suggestion: string; platformSuggestion?: string }>;
 }
 
+/** 与后端 `POST /api/ai/polish` 的 `tone` 枚举一致（五种互不重叠） */
+export type AiPolishTone =
+  | 'auto'
+  | 'warm_friendly'
+  | 'professional_formal'
+  | 'concise_clear'
+  | 'apologetic';
+export type AiPolishStyle = 'auto' | 'reassure' | 'solution_oriented';
+
 export async function postAiPolish(
   tenantId: string,
   userId: string | undefined,
   ticketId: string,
-  draftText: string
+  draftText: string,
+  options?: { tone?: AiPolishTone; style?: AiPolishStyle }
 ): Promise<{ polished: string }> {
+  const tone = options?.tone ?? 'auto';
+  const style = options?.style ?? 'auto';
   const res = await apiFetch(`${base()}/api/ai/polish`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
-    body: JSON.stringify({ ticketId, draftText }),
+    body: JSON.stringify({ ticketId, draftText, tone, style }),
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<{ polished: string }>;

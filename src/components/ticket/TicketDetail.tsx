@@ -76,6 +76,7 @@ import {
   mapApiOrderToUi,
   setGlobalApiError,
   formatAiUserVisibleError,
+  type AiPolishTone,
 } from '@/src/services/intellideskApi';
 import InvoicePreviewModal from './InvoicePreviewModal';
 import SubmitAfterSalesModal from './SubmitAfterSalesModal';
@@ -125,6 +126,15 @@ const MOCK_KB_CITATIONS = [
     excerpt: '客服应在首次接触后 24 小时内给出解决方案选项（退款/补发/部分补偿），并与买家确认。',
   },
 ] as const;
+
+/** 上拉面板：点选即润色；五种语气场景互斥、文案与后端一致 */
+const AI_POLISH_TONE_OPTIONS: { value: AiPolishTone; label: string; hint: string }[] = [
+  { value: 'auto', label: '自动（依情境）', hint: '由模型按工单与对话选最合适语气' },
+  { value: 'warm_friendly', label: '温馨友好', hint: '日常咨询与一般安抚，亲切不煽情' },
+  { value: 'professional_formal', label: '专业正式', hint: '技术/账户/规则与流程，客观可核对' },
+  { value: 'concise_clear', label: '简洁干练', hint: '结论与下一步为主，少客套少重复' },
+  { value: 'apologetic', label: '诚恳致歉', hint: '我方疏失或体验不佳时道歉与补救' },
+];
 
 function buildMainSystemOrderUrl(order: Order): string {
   const base =
@@ -255,11 +265,16 @@ export default function TicketDetail({
   const [isAiGenerated, setIsAiGenerated] = useState(false);
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [isPolishing, setIsPolishing] = useState(false);
+  const [aiPolishTone, setAiPolishTone] = useState<AiPolishTone>('auto');
+  /** 当前正在润色的语气（用于行内 loading） */
+  const [polishingTone, setPolishingTone] = useState<AiPolishTone | null>(null);
   const [isInternalNote, setIsInternalNote] = useState(false);
   const [showTemplatePopover, setShowTemplatePopover] = useState(false);
+  const [showAiPolishPopover, setShowAiPolishPopover] = useState(false);
   const [showTranslationPopover, setShowTranslationPopover] = useState(false);
   const translationPopoverRef = useRef<HTMLDivElement>(null);
   const templatePopoverRef = useRef<HTMLDivElement>(null);
+  const aiPolishPopoverRef = useRef<HTMLDivElement>(null);
   const emojiPopoverRef = useRef<HTMLDivElement>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [templateSearchQuery, setTemplateSearchQuery] = useState('');
@@ -674,25 +689,27 @@ export default function TicketDetail({
     }
   }, [isInternalNote, sendToCustomer, sendToManager]);
 
-  /** 自动翻译 / 插入模板 / 表情：点击浮层外关闭；打开其一则收起其余 */
+  /** 自动翻译 / 插入模板 / AI 润色 / 表情：点击浮层外关闭；打开其一则收起其余 */
   useEffect(() => {
-    if (!showTranslationPopover && !showTemplatePopover && !showEmojiPicker) return;
+    if (!showTranslationPopover && !showTemplatePopover && !showAiPolishPopover && !showEmojiPicker) return;
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Node;
       if (
         translationPopoverRef.current?.contains(target) ||
         templatePopoverRef.current?.contains(target) ||
+        aiPolishPopoverRef.current?.contains(target) ||
         emojiPopoverRef.current?.contains(target)
       ) {
         return;
       }
       setShowTranslationPopover(false);
       setShowTemplatePopover(false);
+      setShowAiPolishPopover(false);
       setShowEmojiPicker(false);
     };
     document.addEventListener('pointerdown', onPointerDown, true);
     return () => document.removeEventListener('pointerdown', onPointerDown, true);
-  }, [showTranslationPopover, showTemplatePopover, showEmojiPicker]);
+  }, [showTranslationPopover, showTemplatePopover, showAiPolishPopover, showEmojiPicker]);
 
   const [copiedOrderId, setCopiedOrderId] = useState(false);
 
@@ -850,22 +867,29 @@ export default function TicketDetail({
     setIsAiModalOpen(false);
   };
 
-  const handleAiPolish = async () => {
+  const runPolishWithTone = async (tone: AiPolishTone) => {
     if (isPolishing || !replyText.trim()) return;
 
+    setAiPolishTone(tone);
+    setPolishingTone(tone);
     setIsPolishing(true);
     setGlobalApiError(null);
     try {
-      const polished = await generateReplyPolish(replyText, ticket, messages, order, user?.id);
+      const polished = await generateReplyPolish(replyText, ticket, messages, order, user?.id, {
+        tone,
+        style: 'auto',
+      });
       if (polished) {
         setReplyText(polished);
         setIsAiGenerated(true);
+        setShowAiPolishPopover(false);
       }
     } catch (error) {
       console.error('Failed to polish with AI:', error);
       setGlobalApiError(`[AI 润色] ${formatAiUserVisibleError(error)}`);
     } finally {
       setIsPolishing(false);
+      setPolishingTone(null);
     }
   };
 
@@ -1413,8 +1437,9 @@ export default function TicketDetail({
         <div className="p-6 bg-white border-t border-slate-200 shrink-0 flex flex-col gap-4">
           <div className="flex flex-col gap-4">
             {isReplyExpanded && (
-              <div className="flex items-center gap-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
-                <div className="flex bg-slate-100 p-1 rounded-lg">
+              <div className="flex flex-col gap-2 w-full min-w-0 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                <div className="flex flex-wrap items-center gap-3 w-full min-w-0">
+                  <div className="flex bg-slate-100 p-1 rounded-lg shrink-0">
                   <button 
                     onClick={() => setIsInternalNote(false)}
                     className={cn(
@@ -1435,7 +1460,7 @@ export default function TicketDetail({
                   </button>
                 </div>
                 
-                <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
+                <div className="flex flex-wrap items-center justify-end gap-2 flex-1 min-w-0 sm:ml-auto">
                   {!isInternalNote && (
                     <div className="relative" ref={translationPopoverRef}>
                       <button
@@ -1443,6 +1468,7 @@ export default function TicketDetail({
                         onClick={() => {
                           setShowTemplatePopover(false);
                           setShowEmojiPicker(false);
+                          setShowAiPolishPopover(false);
                           setShowTranslationPopover((v) => !v);
                         }}
                         className={cn(
@@ -1518,6 +1544,7 @@ export default function TicketDetail({
                       onClick={() => {
                         setShowTranslationPopover(false);
                         setShowEmojiPicker(false);
+                        setShowAiPolishPopover(false);
                         setShowTemplatePopover((v) => !v);
                       }}
                       className={cn(
@@ -1647,23 +1674,84 @@ export default function TicketDetail({
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="relative" ref={aiPolishPopoverRef}>
                     <button
                       type="button"
-                      onClick={handleAiPolish}
+                      onClick={() => {
+                        setShowTranslationPopover(false);
+                        setShowTemplatePopover(false);
+                        setShowEmojiPicker(false);
+                        setShowAiPolishPopover((v) => !v);
+                      }}
                       disabled={isPolishing || !replyText.trim()}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 rounded-lg text-xs font-bold text-indigo-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                      title="对已输入内容进行专业润色"
+                      className={cn(
+                        'flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-colors shadow-sm shrink-0',
+                        showAiPolishPopover
+                          ? 'bg-indigo-100 border-indigo-200 text-indigo-900'
+                          : 'bg-indigo-50 border-indigo-100 text-indigo-700 hover:bg-indigo-100',
+                        (!replyText.trim() || isPolishing) && 'opacity-50 cursor-not-allowed'
+                      )}
+                      title={
+                        !replyText.trim()
+                          ? '请先在输入框填写草稿，再点选语气一键润色'
+                          : '点开后直接选语气，一次点击即润色'
+                      }
                     >
                       {isPolishing ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
                       ) : (
-                        <Pencil className="w-3.5 h-3.5" />
+                        <Pencil className="w-3.5 h-3.5 shrink-0" />
                       )}
                       AI 润色
+                      <ChevronUp
+                        className={cn(
+                          'w-3.5 h-3.5 text-indigo-500/80 shrink-0 transition-transform',
+                          showAiPolishPopover && 'rotate-180'
+                        )}
+                      />
                     </button>
+
+                    {showAiPolishPopover && (
+                      <div className="absolute right-0 bottom-full mb-2 w-[min(22rem,calc(100vw-2rem))] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+                        <div className="p-2.5 border-b border-slate-100 bg-slate-50/50">
+                          <p className="text-xs font-bold text-slate-900">选择语气</p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">点一项立即润色（风格固定为自动优化）</p>
+                        </div>
+                        <div className="p-2 max-h-[min(360px,50vh)] overflow-y-auto space-y-1">
+                          {AI_POLISH_TONE_OPTIONS.map((opt) => {
+                            const busy = isPolishing && polishingTone === opt.value;
+                            return (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() => {
+                                  void runPolishWithTone(opt.value);
+                                }}
+                                disabled={isPolishing || !replyText.trim()}
+                                className={cn(
+                                  'w-full text-left rounded-lg px-3 py-2 transition-colors border',
+                                  aiPolishTone === opt.value && !isPolishing
+                                    ? 'border-indigo-200 bg-indigo-50/80'
+                                    : 'border-transparent hover:bg-slate-50',
+                                  (isPolishing || !replyText.trim()) && 'opacity-60 cursor-not-allowed hover:bg-transparent'
+                                )}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs font-bold text-slate-900">{opt.label}</span>
+                                  {busy ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600 shrink-0" />
+                                  ) : null}
+                                </div>
+                                <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{opt.hint}</p>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
+              </div>
               </div>
             )}
 
@@ -1704,6 +1792,7 @@ export default function TicketDetail({
                       onClick={() => {
                         setShowTranslationPopover(false);
                         setShowTemplatePopover(false);
+                        setShowAiPolishPopover(false);
                         setShowEmojiPicker((v) => !v);
                       }}
                       title="选择表情"
