@@ -1,6 +1,7 @@
 import { X, Wand2, Tag, LayoutTemplate, Info, ChevronDown, Check, Search as SearchIcon } from 'lucide-react';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { openFieldConfigPage, cn } from '@/src/lib/utils';
+import { useIsMobile } from '@/src/hooks/useIsMobile';
 
 export type TemplatePickOption = { value: string; label: string };
 
@@ -171,6 +172,7 @@ export default function AddTemplateModal({
   afterSalesTypeOptions,
   onSave,
 }: AddTemplateModalProps) {
+  const isMobile = useIsMobile();
   const [templateName, setTemplateName] = useState('');
   const [templateContent, setTemplateContent] = useState('');
   const [categoryValues, setCategoryValues] = useState<string[]>([]);
@@ -221,8 +223,11 @@ export default function AddTemplateModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className={cn(
+        "bg-white shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200",
+        isMobile ? "w-full h-full rounded-none" : "w-full max-w-3xl max-h-[90vh] rounded-2xl"
+      )}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <div className="flex items-center gap-2">
             <div className="p-2 bg-orange-100 text-[#F97316] rounded-lg">
@@ -242,7 +247,7 @@ export default function AddTemplateModal({
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto max-h-[75vh] space-y-6">
+        <div className={cn("overflow-y-auto", isMobile ? "flex-1 p-4" : "p-6 max-h-[75vh]")}>
           <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 flex gap-3 text-sm text-slate-600">
             <Info className="w-5 h-5 text-[#F97316] shrink-0 mt-0.5" />
             <p className="leading-relaxed">
@@ -250,8 +255,8 @@ export default function AddTemplateModal({
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-6">
-            <div className="space-y-2 col-span-2">
+          <div className={cn("grid gap-6", isMobile ? "grid-cols-1" : "grid-cols-2")}>
+            <div className={cn("space-y-2", !isMobile && "col-span-2")}>
               <label className="text-sm font-bold text-slate-700">模板名称</label>
               <input
                 type="text"

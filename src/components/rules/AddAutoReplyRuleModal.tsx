@@ -1,6 +1,7 @@
 import { X, ShoppingBag, Clock, Tag, Search, FileText } from 'lucide-react';
 import { useState, useMemo, useEffect } from 'react';
 import { cn } from '@/src/lib/utils';
+import { useIsMobile } from '@/src/hooks/useIsMobile';
 import { MOCK_TEMPLATES } from '@/src/data/demoTemplates';
 import { DEMO_KB_SNIPPETS_FOR_IMPORT } from '@/src/data/demoKnowledgeSnippets';
 import { ROUTING_AFTER_SALES_TYPE_OPTIONS } from '@/src/lib/routingRuleOptions';
@@ -41,6 +42,7 @@ export default function AddAutoReplyRuleModal({
   onSubmit,
   submitting = false,
 }: AddAutoReplyRuleModalProps) {
+  const isMobile = useIsMobile();
   const [ruleName, setRuleName] = useState('');
   const [combineMode, setCombineMode] = useState<'and' | 'or'>('and');
   const [timeEnabled, setTimeEnabled] = useState(true);
@@ -243,8 +245,11 @@ export default function AddAutoReplyRuleModal({
   const showLegacyBlock = isEdit && hadLegacySource;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className={cn(
+        "bg-white shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200",
+        isMobile ? "w-full h-full rounded-none" : "w-full max-w-2xl rounded-2xl"
+      )}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h2 className="text-lg font-bold text-slate-900">
             {isEdit ? '编辑自动回复规则' : '新增自动回复规则'}
@@ -252,13 +257,14 @@ export default function AddAutoReplyRuleModal({
           <button
             type="button"
             onClick={handleClose}
+            title="关闭"
             className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto max-h-[70vh]">
+        <div className={cn("overflow-y-auto", isMobile ? "flex-1 p-4" : "p-6 max-h-[70vh]")}>
           <div className="space-y-6">
             <div className="space-y-2">
               <label className="text-sm font-bold text-slate-700">规则名称</label>
@@ -578,6 +584,7 @@ export default function AddAutoReplyRuleModal({
               <button
                 type="button"
                 onClick={() => setKbPickerOpen(false)}
+                title="关闭"
                 className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100"
               >
                 <X className="w-4 h-4" />
@@ -639,6 +646,7 @@ export default function AddAutoReplyRuleModal({
               <button
                 type="button"
                 onClick={() => setTemplatePickerOpen(false)}
+                title="关闭"
                 className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100"
               >
                 <X className="w-4 h-4" />

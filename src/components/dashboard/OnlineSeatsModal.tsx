@@ -1,5 +1,7 @@
 import { X } from 'lucide-react';
 import type { AgentSeat } from '@/src/types';
+import { useIsMobile } from '@/src/hooks/useIsMobile';
+import { cn } from '@/src/lib/utils';
 
 interface OnlineSeatsModalProps {
   isOpen: boolean;
@@ -14,6 +16,7 @@ export default function OnlineSeatsModal({
   seats,
   onlineBySeatId,
 }: OnlineSeatsModalProps) {
+  const isMobile = useIsMobile();
   if (!isOpen) return null;
 
   const activeSeats = seats.filter((s) => s.status === 'active');
@@ -21,14 +24,17 @@ export default function OnlineSeatsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200"
       role="dialog"
       aria-modal="true"
       aria-labelledby="online-seats-title"
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
+        className={cn(
+          "bg-white shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200",
+          isMobile ? "w-full h-full rounded-none" : "w-full max-w-md rounded-2xl"
+        )}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">

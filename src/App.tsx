@@ -15,6 +15,7 @@ import AutoReplyRulesPage from './components/rules/AutoReplyRulesPage';
 import AfterSalesPage from './components/aftersales/AfterSalesPage';
 import { useAuth } from './hooks/useAuth';
 import LoginPage from './components/auth/LoginPage';
+import H5App from './h5/H5App';
 
 import SettingsLayout from './components/settings/SettingsLayout';
 import DataDictionaryPage from './components/settings/DataDictionaryPage';
@@ -31,6 +32,7 @@ const Insights = () => <div className="p-8">Insights</div>;
 
 export default function App() {
   const { user, loading } = useAuth();
+  const isH5 = import.meta.env.VITE_APP_TYPE === 'h5';
 
   if (loading) {
     return (
@@ -38,6 +40,10 @@ export default function App() {
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
     );
+  }
+
+  if (isH5) {
+    return <H5App />;
   }
 
   return (

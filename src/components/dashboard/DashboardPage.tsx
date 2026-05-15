@@ -26,6 +26,7 @@ import {
 import { useState, useEffect, useMemo } from 'react';
 import { cn } from '@/src/lib/utils';
 import { useAuth } from '@/src/hooks/useAuth';
+import { useIsMobile } from '@/src/hooks/useIsMobile';
 import { summarizeTicket } from '@/src/services/geminiService';
 import {
   intellideskConfigured,
@@ -278,6 +279,7 @@ function seatInitials(name: string): string {
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const isMobile = useIsMobile();
   const liveDash = intellideskConfigured();
   const tenantId = intellideskTenantId();
   const apiUserId = intellideskUserIdForApi(user?.id);
@@ -493,7 +495,10 @@ export default function DashboardPage() {
   ]);
 
   return (
-    <div className="p-8 space-y-8 bg-slate-50/50 min-h-full">
+    <div className={cn(
+      "space-y-6 bg-slate-50/50 min-h-full",
+      isMobile ? "p-4" : "p-8 space-y-8"
+    )}>
       {liveDash && dashLoading ? (
         <div className="flex items-center gap-2 text-sm text-slate-500">
           <Loader2 className="w-4 h-4 animate-spin" />
@@ -502,43 +507,56 @@ export default function DashboardPage() {
       ) : null}
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">欢迎回来, {user?.name.split(' ')[0]}!</h1>
-          <p className="text-slate-500 text-sm mt-1">这是您今天的工作台概览。</p>
+          <h1 className={cn(
+            "font-bold tracking-tight text-slate-900",
+            isMobile ? "text-xl leading-snug" : "text-2xl"
+          )}>欢迎回来, {user?.name.split(' ')[0]}!</h1>
+          <p className={cn(
+            'mt-1 text-slate-600',
+            isMobile ? 'text-[13px] leading-snug' : 'text-sm text-slate-500'
+          )}>
+            这是您今天的工作台概览。
+          </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          {!isMobile && (
+            <button
+              type="button"
+              onClick={() => setOnlineSeatsOpen(true)}
+              className="flex -space-x-2 cursor-pointer rounded-lg p-1 -m-1 hover:bg-slate-100/80 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F97316]/40"
+              title="查看在线坐席"
+              aria-label="查看在线坐席"
+            >
+              {onlineSeatPreview.shown.length === 0 && onlineSeatPreview.rest === 0 ? (
+                <span className="w-8 h-8 rounded-full border-2 border-white bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-400">
+                  —
+                </span>
+              ) : (
+                <>
+                  {onlineSeatPreview.shown.map((initials, i) => (
+                    <span
+                      key={i}
+                      className="w-8 h-8 rounded-full border-2 border-white bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-800"
+                    >
+                      {initials}
+                    </span>
+                  ))}
+                  {onlineSeatPreview.rest > 0 ? (
+                    <span className="w-8 h-8 rounded-full border-2 border-white bg-[#F97316] text-white flex items-center justify-center text-[10px] font-bold">
+                      +{onlineSeatPreview.rest}
+                    </span>
+                  ) : null}
+                </>
+              )}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setOnlineSeatsOpen(true)}
-            className="flex -space-x-2 cursor-pointer rounded-lg p-1 -m-1 hover:bg-slate-100/80 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#F97316]/40"
-            title="查看在线坐席"
-            aria-label="查看在线坐席"
-          >
-            {onlineSeatPreview.shown.length === 0 && onlineSeatPreview.rest === 0 ? (
-              <span className="w-8 h-8 rounded-full border-2 border-white bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-400">
-                —
-              </span>
-            ) : (
-              <>
-                {onlineSeatPreview.shown.map((initials, i) => (
-                  <span
-                    key={i}
-                    className="w-8 h-8 rounded-full border-2 border-white bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-800"
-                  >
-                    {initials}
-                  </span>
-                ))}
-                {onlineSeatPreview.rest > 0 ? (
-                  <span className="w-8 h-8 rounded-full border-2 border-white bg-[#F97316] text-white flex items-center justify-center text-[10px] font-bold">
-                    +{onlineSeatPreview.rest}
-                  </span>
-                ) : null}
-              </>
+            className={cn(
+              "bg-[#F97316] text-white rounded-lg font-bold shadow-md shadow-orange-500/20 hover:bg-orange-600 transition-all",
+              isMobile ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm"
             )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setOnlineSeatsOpen(true)}
-            className="px-4 py-2 bg-[#F97316] text-white rounded-lg text-sm font-bold shadow-md shadow-orange-500/20 hover:bg-orange-600 transition-all"
           >
             在线坐席
           </button>
@@ -546,20 +564,31 @@ export default function DashboardPage() {
       </header>
       
       {/* AI Insights Banner */}
-      <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-2xl p-6 text-white shadow-lg relative overflow-hidden">
+      <div className={cn(
+        "bg-gradient-to-r from-slate-900 to-slate-800 rounded-2xl text-white shadow-lg relative overflow-hidden",
+        isMobile ? "p-4" : "p-6"
+      )}>
         <div className="relative z-10 flex items-start gap-4">
-          <div className="p-3 bg-white/10 rounded-xl backdrop-blur-sm border border-white/10">
-            <Sparkles className="w-6 h-6 text-[#F97316]" />
-          </div>
+          {!isMobile && (
+            <div className="p-3 bg-white/10 rounded-xl backdrop-blur-sm border border-white/10">
+              <Sparkles className="w-6 h-6 text-[#F97316]" />
+            </div>
+          )}
           <div className="space-y-1">
-            <h3 className="text-lg font-bold">AI 效能洞察</h3>
+            <div className="flex items-center gap-2">
+              {isMobile && <Sparkles className="w-4 h-4 text-[#F97316]" />}
+              <h3 className={cn("font-bold", isMobile ? "text-base" : "text-lg")}>AI 效能洞察</h3>
+            </div>
             {isGeneratingInsight ? (
               <div className="flex items-center gap-2 text-slate-300 text-sm">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 正在分析当前趋势...
               </div>
             ) : (
-              <p className="text-slate-300 text-sm leading-relaxed max-w-3xl">
+              <p className={cn(
+                'max-w-3xl leading-relaxed text-slate-200',
+                isMobile ? 'text-[13px]' : 'text-sm text-slate-300'
+              )}>
                 {aiInsight || "今日表现强劲！工单量上升 12.5%，但响应时间缩短了 18.4%。建议在高峰时段向亚马逊北美站重新分配客服资源。"}
               </p>
             )}
@@ -570,92 +599,100 @@ export default function DashboardPage() {
       </div>
 
       {/* 使用导航：紧跟 AI 洞察下方，以数字 1–4 为步骤标识 */}
-      <div>
-        <h3 className="text-lg font-bold text-slate-900 mb-4">使用导航</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-          {USAGE_NAV.map((nav) => {
-            const isExternal = nav.path.startsWith('http');
-            const innerContent = (
-              <>
-                <div
-                  className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-2xl font-bold tabular-nums text-slate-800 group-hover:border-[#F97316]/40 group-hover:bg-orange-50/60 group-hover:text-[#F97316] transition-colors"
-                  aria-hidden
-                >
-                  {nav.step}
-                </div>
-                <div className="flex-1 min-w-0 pt-0.5">
-                  <h4 className="font-bold text-slate-900 group-hover:text-[#F97316] transition-colors">
-                    {nav.title}
-                  </h4>
-                  <p className="text-sm text-slate-500 mt-1 leading-snug">{nav.desc}</p>
-                </div>
-                <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 shrink-0 mt-1" />
-              </>
-            );
-
-            const className = "bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-start gap-4 hover:border-slate-300 hover:shadow-md transition-all group";
-
-            if (isExternal) {
-              return (
-                <a key={nav.step} href={nav.path} className={className} target="_blank" rel="noopener noreferrer">
-                  {innerContent}
-                </a>
+      {!isMobile && (
+        <div>
+          <h3 className="text-lg font-bold text-slate-900 mb-4">使用导航</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            {USAGE_NAV.map((nav) => {
+              const isExternal = nav.path.startsWith('http');
+              const innerContent = (
+                <>
+                  <div
+                    className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-2xl font-bold tabular-nums text-slate-800 group-hover:border-[#F97316]/40 group-hover:bg-orange-50/60 group-hover:text-[#F97316] transition-colors"
+                    aria-hidden
+                  >
+                    {nav.step}
+                  </div>
+                  <div className="flex-1 min-w-0 pt-0.5">
+                    <h4 className="font-bold text-slate-900 group-hover:text-[#F97316] transition-colors">
+                      {nav.title}
+                    </h4>
+                    <p className="text-sm text-slate-500 mt-1 leading-snug">{nav.desc}</p>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 shrink-0 mt-1" />
+                </>
               );
-            }
-            return (
-              <Link key={nav.step} to={nav.path} className={className}>
-                {innerContent}
-              </Link>
-            );
-          })}
+
+              const className = "bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex items-start gap-4 hover:border-slate-300 hover:shadow-md transition-all group";
+
+              if (isExternal) {
+                return (
+                  <a key={nav.step} href={nav.path} className={className} target="_blank" rel="noopener noreferrer">
+                    {innerContent}
+                  </a>
+                );
+              }
+              return (
+                <Link key={nav.step} to={nav.path} className={className}>
+                  {innerContent}
+                </Link>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 工单指标：与消息处理状态 / SLA 口径一致 */}
       <div>
         <div className="flex items-center gap-2 mb-4">
-          <h3 className="text-lg font-bold text-slate-900">工单</h3>
-          <div className="group relative flex items-center">
-            <HelpCircle className="w-4 h-4 text-slate-400 hover:text-slate-600 cursor-help transition-colors" />
-            <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-72 p-3 bg-slate-800 text-slate-200 text-xs rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none z-10">
-              环比（角标百分比）基准为<strong className="text-white mx-1">{INBOX_METRICS_PERIOD_LABEL}</strong>：用当前统计时刻的指标值与昨日同一时刻对比，按
-              <span className="font-mono text-white/80 mx-1">(今日值 − 昨日值) ÷ |昨日值|</span>
-              计算。昨日为 0 时由系统约定展示「—」或「新增」。↑ 红 / ↓ 绿仅表示增减方向，不代表业务好坏。
-              <div className="absolute left-1/2 -translate-x-1/2 top-full border-4 border-transparent border-t-slate-800" />
+          <h3 className={cn("font-bold text-slate-900", isMobile ? "text-base" : "text-lg")}>工单概览</h3>
+          {!isMobile && (
+            <div className="group relative flex items-center">
+              <HelpCircle className="w-4 h-4 text-slate-400 hover:text-slate-600 cursor-help transition-colors" />
+              <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-72 p-3 bg-slate-800 text-slate-200 text-xs rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all pointer-events-none z-10">
+                环比（角标百分比）基准为<strong className="text-white mx-1">{INBOX_METRICS_PERIOD_LABEL}</strong>：用当前统计时刻的指标值与昨日同一时刻对比，按
+                <span className="font-mono text-white/80 mx-1">(今日值 − 昨日值) ÷ |昨日值|</span>
+                计算。昨日为 0 时由系统约定展示「—」或「新增」。↑ 红 / ↓ 绿仅表示增减方向，不代表业务好坏。
+                <div className="absolute left-1/2 -translate-x-1/2 top-full border-4 border-transparent border-t-slate-800" />
+              </div>
             </div>
-          </div>
+          )}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className={cn(
+          "grid gap-4",
+          isMobile ? "grid-cols-2" : "grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"
+        )}>
         {inboxStatCards.map((stat) => (
           <div
             key={stat.title}
             className="bg-white rounded-[24px] shadow-sm border border-slate-100 hover:shadow-md transition-all group flex flex-col"
           >
-            <Link to={stat.link} className="p-6 space-y-4 flex-1 block">
+            <Link to={stat.link} className={cn("block flex-1", isMobile ? "p-4 space-y-3" : "p-6 space-y-4")}>
               <div className="flex items-center justify-between">
-                <div className={cn('p-3 rounded-2xl transition-colors', stat.bg)}>
-                  <stat.icon className={cn('w-6 h-6', stat.color)} />
+                <div className={cn('rounded-2xl transition-colors', stat.bg, isMobile ? "p-2" : "p-3")}>
+                  <stat.icon className={cn(isMobile ? "w-5 h-5" : "w-6 h-6", stat.color)} />
                 </div>
                 <div
                   className={cn(
-                    'flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full',
+                    'flex items-center gap-0.5 font-bold rounded-full',
+                    isMobile ? "text-[10px] px-1.5 py-0.5" : "text-xs px-2.5 py-1",
                     stat.trend === 'up' ? 'text-red-600 bg-red-50' : 'text-green-600 bg-green-50'
                   )}
                   title={`${INBOX_METRICS_PERIOD_LABEL}环比：${stat.change}`}
                 >
                   {stat.trend === 'up' ? (
-                    <ArrowUpRight className="w-3 h-3" />
+                    <ArrowUpRight className="w-2.5 h-2.5" />
                   ) : (
-                    <ArrowDownRight className="w-3 h-3" />
+                    <ArrowDownRight className="w-2.5 h-2.5" />
                   )}
                   {stat.change}
                 </div>
               </div>
               <div className="space-y-1">
-                <p className="text-sm font-semibold text-slate-800">{stat.title}</p>
-                <div className="flex items-end justify-between pt-2">
-                  <p className="text-3xl font-bold text-slate-900 tracking-tight">{stat.value}</p>
-                  <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-600 transition-colors mb-1 shrink-0" />
+                <p className={cn("font-semibold text-slate-800", isMobile ? "text-xs" : "text-sm")}>{stat.title}</p>
+                <div className="flex items-end justify-between pt-1">
+                  <p className={cn("font-bold text-slate-900 tracking-tight", isMobile ? "text-xl" : "text-3xl")}>{stat.value}</p>
+                  {!isMobile && <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-600 transition-colors mb-1 shrink-0" />}
                 </div>
               </div>
             </Link>
@@ -664,94 +701,99 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* 业务结构分布（在线模式由 /api/dashboard/structure 提供） */}
+      {/* 业务结构分布 */}
       <div>
-        <h3 className="text-lg font-bold text-slate-900 mb-4">业务结构分布</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        <h3 className={cn("font-bold text-slate-900 mb-4", isMobile ? "text-base" : "text-lg")}>业务结构分布</h3>
+        <div className={cn(
+          "grid gap-4",
+          isMobile ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6"
+        )}>
           <DistributionPieCard title="工单意图分布" data={intentPie} />
           <DistributionPieCard title="用户情绪分布" data={sentimentPie} />
-          <DistributionPieCard title="订单状态分布" data={orderStatusPie} />
+          {!isMobile && <DistributionPieCard title="订单状态分布" data={orderStatusPie} />}
         </div>
       </div>
 
-      {/* Main Charts Section：右侧「平台分布」高度与左侧趋势卡（图表区 300px + 内边距/标题）对齐，列表超出时滚动 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:items-start">
-        <div className="lg:col-span-2 bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold text-slate-900">工单处理趋势</h3>
-            <select
-              className="bg-slate-50 border-none text-xs font-medium rounded-lg px-3 py-1.5 outline-none text-slate-600"
-              value={trendRange}
-              onChange={(e) => setTrendRange(e.target.value === '30d' ? '30d' : '7d')}
-              disabled={!liveDash}
-            >
-              <option value="7d">最近 7 天</option>
-              <option value="30d">最近 30 天</option>
-            </select>
+      {/* Main Charts Section */}
+      {!isMobile && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:items-start">
+          <div className="lg:col-span-2 bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 space-y-6">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-slate-900">工单处理趋势</h3>
+              <select
+                className="bg-slate-50 border-none text-xs font-medium rounded-lg px-3 py-1.5 outline-none text-slate-600"
+                value={trendRange}
+                onChange={(e) => setTrendRange(e.target.value === '30d' ? '30d' : '7d')}
+                disabled={!liveDash}
+              >
+                <option value="7d">最近 7 天</option>
+                <option value="30d">最近 30 天</option>
+              </select>
+            </div>
+            
+            <div className="h-[300px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient id="colorTickets" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#F97316" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#F97316" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis 
+                    dataKey="name" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fontSize: 12, fill: '#94a3b8' }} 
+                    dy={10}
+                  />
+                  <YAxis 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fontSize: 12, fill: '#94a3b8' }} 
+                  />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                  />
+                  <Area 
+                    type="monotone" 
+                    dataKey="tickets" 
+                    stroke="#F97316" 
+                    strokeWidth={3}
+                    fillOpacity={1} 
+                    fill="url(#colorTickets)" 
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </div>
           
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="colorTickets" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#F97316" stopOpacity={0.2}/>
-                    <stop offset="95%" stopColor="#F97316" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis 
-                  dataKey="name" 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fontSize: 12, fill: '#94a3b8' }} 
-                  dy={10}
-                />
-                <YAxis 
-                  axisLine={false} 
-                  tickLine={false} 
-                  tick={{ fontSize: 12, fill: '#94a3b8' }} 
-                />
-                <Tooltip 
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                />
-                <Area 
-                  type="monotone" 
-                  dataKey="tickets" 
-                  stroke="#F97316" 
-                  strokeWidth={3}
-                  fillOpacity={1} 
-                  fill="url(#colorTickets)" 
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 flex flex-col min-h-0 lg:h-[412px]">
+            <h3 className="text-lg font-bold text-slate-900 shrink-0">平台分布</h3>
+            <div className="mt-6 flex-1 min-h-0 overflow-y-auto pr-1 space-y-5 scrollbar-thin scrollbar-thumb-slate-200 hover:scrollbar-thumb-slate-300">
+              {channelBars.length === 0 ? (
+                <p className="text-sm text-slate-500 py-4 text-center">
+                  {liveDash ? '暂无工单平台数据' : '演示数据'}
+                </p>
+              ) : null}
+              {channelBars.map((channel) => (
+                <div key={channel.name} className="space-y-2">
+                  <div className="flex justify-between text-sm gap-2">
+                    <span className="font-medium text-slate-700">{channel.name}</span>
+                    <span className="font-bold text-slate-900 tabular-nums shrink-0">
+                      {formatCountWithPercent(channel.count, channel.value)}
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+                    <div className={cn('h-full rounded-full', channel.color)} style={{ width: `${channel.value}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
-        
-        <div className="bg-white p-6 rounded-[24px] shadow-sm border border-slate-100 flex flex-col min-h-0 lg:h-[412px]">
-          <h3 className="text-lg font-bold text-slate-900 shrink-0">平台分布</h3>
-          <div className="mt-6 flex-1 min-h-0 overflow-y-auto pr-1 space-y-5 scrollbar-thin scrollbar-thumb-slate-200 hover:scrollbar-thumb-slate-300">
-            {channelBars.length === 0 ? (
-              <p className="text-sm text-slate-500 py-4 text-center">
-                {liveDash ? '暂无工单平台数据' : '演示数据'}
-              </p>
-            ) : null}
-            {channelBars.map((channel) => (
-              <div key={channel.name} className="space-y-2">
-                <div className="flex justify-between text-sm gap-2">
-                  <span className="font-medium text-slate-700">{channel.name}</span>
-                  <span className="font-bold text-slate-900 tabular-nums shrink-0">
-                    {formatCountWithPercent(channel.count, channel.value)}
-                  </span>
-                </div>
-                <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div className={cn('h-full rounded-full', channel.color)} style={{ width: `${channel.value}%` }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      )}
 
       <OnlineSeatsModal
         isOpen={onlineSeatsOpen}

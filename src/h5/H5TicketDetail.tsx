@@ -37,7 +37,6 @@ import {
   Trash2,
   Activity,
   Star,
-  GripVertical,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/src/lib/utils';
@@ -61,7 +60,6 @@ import {
 } from '@/src/services/geminiService';
 import { useAuth } from '@/src/hooks/useAuth';
 import { useIsMobile } from '@/src/hooks/useIsMobile';
-import Drawer from '@/src/components/ui/Drawer';
 import {
   intellideskConfigured,
   intellideskTenantId,
@@ -80,9 +78,9 @@ import {
   formatAiUserVisibleError,
   type AiPolishTone,
 } from '@/src/services/intellideskApi';
-import InvoicePreviewModal from './InvoicePreviewModal';
-import SubmitAfterSalesModal from './SubmitAfterSalesModal';
-import AiSuggestionModal from './AiSuggestionModal';
+import InvoicePreviewModal from '@/src/components/ticket/InvoicePreviewModal';
+import SubmitAfterSalesModal from '@/src/components/ticket/SubmitAfterSalesModal';
+import AiSuggestionModal from '@/src/components/ticket/AiSuggestionModal';
 import {
   getTranslationSettings,
   saveTranslationSettings,
@@ -241,7 +239,7 @@ function MessageBubbleContent({ text }: { text: string }) {
   return <div className="whitespace-pre-wrap">{plain}</div>;
 }
 
-export default function TicketDetail({
+export default function H5TicketDetail({
   ticket,
   messages,
   order: orderFromParent,
@@ -264,7 +262,6 @@ export default function TicketDetail({
 }: TicketDetailProps) {
   const { user } = useAuth();
   const isMobile = useIsMobile();
-  const [isBusinessDrawerOpen, setIsBusinessDrawerOpen] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [isAiGenerated, setIsAiGenerated] = useState(false);
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
@@ -283,20 +280,19 @@ export default function TicketDetail({
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [templateSearchQuery, setTemplateSearchQuery] = useState('');
   
-  type TabId = 'order' | 'logistics' | 'invoice' | 'after-sales' | 'ai-insight';
+  type TabId = 'chat' | 'order' | 'logistics' | 'invoice' | 'after-sales' | 'ai-insight';
   const [tabOrder, setTabOrder] = useState<TabId[]>(() => {
-    const saved = localStorage.getItem('intellidesk_ticket_tabs_order');
+    const saved = localStorage.getItem('intellidesk_h5_ticket_tabs_order');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // 校验是否包含所有必需的 tabId，防止以后新增 tab 导致旧缓存出问题
-        const required: TabId[] = ['order', 'logistics', 'invoice', 'after-sales', 'ai-insight'];
+        const required: TabId[] = ['chat', 'order', 'logistics', 'invoice', 'after-sales', 'ai-insight'];
         if (Array.isArray(parsed) && required.every(id => parsed.includes(id))) {
           return parsed;
         }
       } catch { /* ignore */ }
     }
-    return ['ai-insight', 'order', 'logistics', 'invoice', 'after-sales'];
+    return ['chat', 'ai-insight', 'order', 'logistics', 'invoice', 'after-sales'];
   });
 
   const [activeTab, setActiveTab] = useState<TabId>(() => tabOrder[0]);
@@ -348,7 +344,7 @@ export default function TicketDetail({
     newOrder.splice(newIdx, 0, draggedTab);
 
     setTabOrder(newOrder);
-    localStorage.setItem('intellidesk_ticket_tabs_order', JSON.stringify(newOrder));
+    localStorage.setItem('intellidesk_h5_ticket_tabs_order', JSON.stringify(newOrder));
   };
 
   const handleDragEnd = () => {
@@ -996,46 +992,14 @@ export default function TicketDetail({
     return '英语';
   };
 
-  const renderBusinessSidebarContent = () => (
+  const renderBusinessSidebarContent = () => {
+    // 根据 H5 要求，这里去掉侧边栏概念，直接用 activeTab 切换「会话」或其它面板内容
+    if (activeTab === 'chat') return null; // 会话在主体区显示
+    return (
     <div className={cn(
-      'flex min-h-0 flex-col overflow-y-auto bg-white',
-      isMobile ? 'w-full' : 'w-[320px] shrink-0 border-l border-slate-200'
+      'flex min-h-0 flex-col overflow-y-auto bg-slate-50',
+      'w-full h-full pb-4'
     )}>
-      {/* Tabs */}
-      <div className="flex border-b border-slate-200 px-2 pt-2 overflow-x-auto no-scrollbar scroll-smooth">
-        {tabOrder.map((id) => {
-          const label = {
-            'order': '订单',
-            'logistics': '物流',
-            'invoice': '发票',
-            'after-sales': '售后',
-            'ai-insight': 'AI 摘要'
-          }[id];
-          
-          return (
-            <button 
-              key={id}
-              draggable
-              onDragStart={(e) => handleDragStart(e, id)}
-              onDragOver={(e) => handleDragOver(e, id)}
-              onDragEnd={handleDragEnd}
-              onClick={() => setActiveTab(id)}
-              className={cn(
-                "px-3 py-2 text-sm font-medium border-b-2 transition-all whitespace-nowrap cursor-pointer flex items-center gap-1 group relative",
-                activeTab === id ? "border-[#F97316] text-[#F97316]" : "border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300",
-                draggedTab === id && "opacity-50"
-              )}
-            >
-              {id === 'ai-insight' && (
-                <Sparkles className={cn("w-3 h-3 transition-colors", activeTab === id ? "text-[#F97316]" : "text-purple-400")} />
-              )}
-              {label}
-              {!isMobile && <GripVertical className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 transition-opacity absolute -left-0.5" />}
-            </button>
-          );
-        })}
-      </div>
-
       <div className="flex-1 min-h-0 overflow-y-auto">
         {activeTab === 'ai-insight' && (
           <div className="flex flex-col h-full overflow-hidden">
@@ -1133,15 +1097,15 @@ export default function TicketDetail({
 
                   <button
                     type="button"
-                    onClick={handleAiSuggest}
+                    onClick={() => void handleAiSuggest()}
                     disabled={isGeneratingDraft}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-purple-50 border border-purple-200 hover:bg-purple-100 text-xs font-bold text-purple-800 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex min-h-11 w-full touch-manipulation items-center justify-center gap-2 rounded-xl border border-purple-200 bg-purple-50 px-3 py-2.5 text-sm font-bold text-purple-800 shadow-sm transition-colors hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-50"
                     title="基于知识库自动生成回复草稿"
                   >
                     {isGeneratingDraft ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
                     ) : (
-                      <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                      <Sparkles className="h-4 w-4 shrink-0" />
                     )}
                     生成智能回复
                   </button>
@@ -1153,30 +1117,31 @@ export default function TicketDetail({
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mb-3">
-                    <Sparkles className="w-6 h-6 text-slate-300" />
+                <div className="flex w-full max-w-sm flex-col items-stretch justify-center px-2 py-12 text-center">
+                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-50">
+                    <Sparkles className="h-6 w-6 text-slate-300" />
                   </div>
-                  <p className="text-xs text-slate-500 max-w-[200px] leading-relaxed mb-4">
+                  <p className="mb-4 text-xs leading-relaxed text-slate-500">
                     点击按钮开始分析工单，AI 将自动识别客户意图、情绪并生成摘要。
                   </p>
                   <button
+                    type="button"
                     onClick={() => void handleTicketInsight()}
-                    className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50 shadow-sm transition-all"
+                    className="min-h-11 w-full touch-manipulation rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50"
                   >
                     开始分析
                   </button>
                   <button
                     type="button"
-                    onClick={handleAiSuggest}
+                    onClick={() => void handleAiSuggest()}
                     disabled={isGeneratingDraft}
-                    className="mt-3 w-full max-w-[260px] flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-purple-50 border border-purple-200 hover:bg-purple-100 text-xs font-bold text-purple-800 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="mt-3 flex min-h-11 w-full touch-manipulation items-center justify-center gap-2 rounded-xl border border-purple-200 bg-purple-50 px-3 py-2.5 text-sm font-bold text-purple-800 shadow-sm transition-colors hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-50"
                     title="基于知识库自动生成回复草稿"
                   >
                     {isGeneratingDraft ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
                     ) : (
-                      <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                      <Sparkles className="h-4 w-4 shrink-0" />
                     )}
                     生成智能回复
                   </button>
@@ -1889,46 +1854,40 @@ export default function TicketDetail({
         )}
       </div>
     </div>
-  );
+    );
+  };
 
   return (
     <div className="flex h-full min-h-0 bg-slate-50 overflow-hidden relative">
       {/* Main Conversation Area — min-h-0 保证中间会话区在 flex 中可被压缩并独立滚动 */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white border-r border-slate-200 relative">
-        {/* Header */}
-        <header className={cn(
-          "border-b border-slate-200 bg-white shrink-0",
-          isMobile ? "px-3 py-2" : "px-6 py-3"
-        )}>
-          <div className="flex flex-col gap-1 min-w-0 lg:flex-row lg:items-start lg:justify-between lg:gap-4">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white relative">
+        {/* Header - 保留为固定高度的 Navbar 或 Tab 栏 */}
+        <header className="border-b border-slate-200 bg-white shrink-0 px-3 py-2 z-20 relative">
+          <div className="flex flex-col gap-1 min-w-0">
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-2">
-                <h2 className={cn("font-bold text-slate-900 truncate min-w-0", isMobile ? "text-sm" : "text-base")} title={getTicketSubjectForDisplay(ticket)}>
-                  {isMobile ? "" : "工单主题："} {getTicketSubjectForDisplay(ticket)}
+                <h2 className={cn("font-bold text-slate-900 truncate min-w-0", "text-sm")} title={getTicketSubjectForDisplay(ticket)}>
+                  {getTicketSubjectForDisplay(ticket)}
                 </h2>
               </div>
 
               {/* 移动端：顶部分段切换业务面板，避免与对话区挤在同一屏 */}
-              {isMobile && (
-                <div
-                  className="mt-2 flex gap-1 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                  role="tablist"
-                  aria-label="工单业务分区"
-                >
+              <div
+                className="mt-3 flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                role="tablist"
+                aria-label="工单业务分区"
+              >
                   {(
                     [
                       { id: 'chat' as const, label: '会话' },
-                      { id: 'ai-insight' as TabId, label: 'AI' },
+                      { id: 'ai-insight' as TabId, label: 'AI摘要' },
                       { id: 'order' as TabId, label: '订单' },
                       { id: 'logistics' as TabId, label: '物流' },
                       { id: 'invoice' as TabId, label: '发票' },
                       { id: 'after-sales' as TabId, label: '售后' },
                     ] as const
                   ).map((t) => {
-                    const isChat = t.id === 'chat';
-                    const active = isChat
-                      ? !isBusinessDrawerOpen
-                      : isBusinessDrawerOpen && activeTab === t.id;
+                    const active = activeTab === t.id;
                     return (
                       <button
                         key={t.id}
@@ -1936,30 +1895,23 @@ export default function TicketDetail({
                         role="tab"
                         aria-selected={active}
                         onClick={() => {
-                          if (isChat) {
-                            setIsBusinessDrawerOpen(false);
-                          } else {
-                            setActiveTab(t.id);
-                            setIsBusinessDrawerOpen(true);
-                          }
+                          setActiveTab(t.id);
                         }}
                         className={cn(
-                          'shrink-0 rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors active:scale-[0.98]',
+                          'shrink-0 rounded-full border px-4 py-1.5 text-xs font-bold transition-colors active:scale-[0.98]',
                           active
-                            ? 'border-orange-200 bg-orange-50 text-[#F97316]'
-                            : 'border-transparent bg-slate-50 text-slate-600 hover:bg-slate-100'
+                            ? 'border-orange-200 bg-orange-50 text-[#F97316] shadow-sm'
+                            : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
                         )}
                       >
                         {t.label}
                       </button>
                     );
                   })}
-                </div>
-              )}
+              </div>
 
-              {isMobile ? (
-                <p
-                  className="mt-1.5 truncate text-[11px] text-slate-500 tabular-nums"
+              <p
+                className="mt-1.5 truncate text-[11px] text-slate-500 tabular-nums"
                   title={[
                     `工单 ${formatTicketReadableRef(ticket)}`,
                     ticket.createdAt ? `创建 ${format(new Date(ticket.createdAt), 'yyyy-MM-dd HH:mm')}` : '',
@@ -1976,38 +1928,11 @@ export default function TicketDetail({
                     </span>
                   )}
                 </p>
-              ) : (
-                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
-                  <span
-                    className="font-medium text-slate-600 tabular-nums"
-                    title={`完整工单 ID：${ticket.id}`}
-                  >
-                    工单 {formatTicketReadableRef(ticket)}
-                  </span>
-                  {ticket.createdAt && (
-                    <>
-                      <span className="h-1 w-1 shrink-0 rounded-full bg-slate-300" aria-hidden />
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3.5 w-3.5" />
-                        创建于 {format(new Date(ticket.createdAt), 'MM月dd日 HH:mm')}
-                      </span>
-                    </>
-                  )}
-                  {ticket.updatedAt && (
-                    <>
-                      <span className="h-1 w-1 shrink-0 rounded-full bg-slate-300" />
-                      <span className="flex items-center gap-1">
-                        <Activity className="h-3.5 w-3.5" />
-                        更新于 {format(new Date(ticket.updatedAt), 'HH:mm')}
-                      </span>
-                    </>
-                  )}
-                </div>
-              )}
+
               <TicketDetailStatusChips
                 ticket={ticket}
                 order={order}
-                compact={isMobile}
+                compact={true}
                 renderConversationAside={Boolean(onUpdateTicket)}
                 onMessageProcessingStatusChange={
                   onUpdateTicket
@@ -2022,71 +1947,16 @@ export default function TicketDetail({
                 onSentimentRefresh={handleSentimentRefresh}
               />
             </div>
-
-            {((seatOptions && seatOptions.length > 0 && onAssignSeat) || onUpdateTicket) && (
-              <div className={cn(
-                "flex shrink-0 lg:pt-1 lg:items-end",
-                isMobile ? "flex-row items-center gap-3 mt-2" : "flex-col gap-2 w-full sm:w-auto"
-              )}>
-                {seatOptions && seatOptions.length > 0 && onAssignSeat && (
-                  <div className="flex items-center gap-2 min-w-0 justify-end w-full sm:w-auto">
-                    {!isMobile && (
-                      <label
-                        htmlFor={`assign-seat-${ticket.id}`}
-                        className="text-xs font-medium text-slate-500 whitespace-nowrap hidden lg:inline"
-                      >
-                        分配给坐席
-                      </label>
-                    )}
-                    <div className="relative w-full max-w-[80px] sm:w-[76px]">
-                      <select
-                        id={`assign-seat-${ticket.id}`}
-                        value={assignSeatValue}
-                        onChange={(e) => onAssignSeat(e.target.value || null)}
-                        className={cn(detailHeaderSelectClassName, isMobile && "h-8 py-0")}
-                        title="选择负责跟进的客服坐席"
-                        aria-label="分配给坐席"
-                      >
-                        <option value="">未分配</option>
-                        {seatOptions.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.label}
-                          </option>
-                        ))}
-                      </select>
-                      <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                    </div>
-                  </div>
-                )}
-                {onUpdateTicket && (
-                  <div className="flex items-center gap-2 min-w-0 justify-end w-full sm:w-auto">
-                    {!isMobile && (
-                      <label
-                        htmlFor={`conv-status-${ticket.id}`}
-                        className="text-xs font-medium text-slate-500 whitespace-nowrap hidden lg:inline"
-                      >
-                        会话状态
-                      </label>
-                    )}
-                    <div className="w-full max-w-[80px] sm:w-[76px] min-w-0">
-                      <TicketConversationStatusSelect
-                        selectId={`conv-status-${ticket.id}`}
-                        ticket={ticket}
-                        onChange={(status) => onUpdateTicket({ messageProcessingStatus: status })}
-                        className={cn("w-full", isMobile && "h-8 py-0")}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </header>
         
+        {/* Messages & Business Area */}
+        {activeTab === 'chat' ? (
+          <>
         {/* Messages List */}
         <div className={cn(
           'min-h-0 flex-1 overflow-y-auto bg-slate-50/50 space-y-6',
-          isMobile ? 'p-3' : 'p-6'
+          'p-3'
         )}>
           {conversationMessagesTotal != null &&
           conversationMessagesTotal > messages.length &&
@@ -2207,14 +2077,14 @@ export default function TicketDetail({
                 key={message.id}
                 className={cn(
                   'flex gap-3',
-                  isMobile ? 'max-w-[92%]' : 'max-w-[85%]',
+                  'max-w-[92%]',
                   isRtl ? 'ml-auto flex-row-reverse' : ''
                 )}
               >
                 <div
                   className={cn(
                     'rounded-full flex items-center justify-center shrink-0 text-[13px] font-bold uppercase select-none',
-                    isMobile ? 'w-7 h-7' : 'w-8 h-8',
+                    'w-7 h-7',
                     message.senderType === 'customer'
                       ? 'bg-blue-100 text-blue-600'
                       : message.senderType === 'manager'
@@ -2297,7 +2167,7 @@ export default function TicketDetail({
                     }}
                     className={cn(
                       'rounded-2xl text-sm leading-relaxed shadow-sm transition-all',
-                      isMobile ? 'p-3' : 'p-4',
+                      'p-3',
                       isLoadingTranslation ? 'cursor-pointer hover:shadow-md' : '',
                       message.senderType === 'customer'
                         ? 'bg-white text-slate-800 border border-slate-200 rounded-tl-none'
@@ -2427,35 +2297,44 @@ export default function TicketDetail({
         
         {/* Reply Area */}
         <div className={cn(
-          'flex shrink-0 flex-col border-t border-slate-200 bg-white',
-          isMobile ? 'gap-2 p-3' : 'gap-4 p-6'
+          'flex shrink-0 flex-col border-t border-slate-200 bg-white relative z-20',
+          'gap-2 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'
         )}>
-          <div className={cn('flex flex-col', isMobile ? 'gap-2' : 'gap-4')}>
+          <div className="flex flex-col gap-2 w-full min-w-0">
             {isReplyExpanded && (
-              <div className="flex flex-col gap-2 w-full min-w-0 animate-in fade-in slide-in-from-bottom-2 duration-200">
-                <div className="flex flex-wrap items-center gap-3 w-full min-w-0">
-                  <div className="flex bg-slate-100 p-1 rounded-lg shrink-0">
+              <>
+              <div
+                className="grid w-full shrink-0 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1"
+                role="tablist"
+                aria-label="回复类型"
+              >
                   <button 
+                    type="button"
+                    role="tab"
+                    aria-selected={!isInternalNote}
                     onClick={() => setIsInternalNote(false)}
                     className={cn(
-                      "px-4 py-1.5 rounded-md text-xs font-medium transition-all",
-                      !isInternalNote ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                      'min-h-11 rounded-lg text-sm font-semibold transition-all active:scale-[0.98]',
+                      !isInternalNote ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-800"
                     )}
                   >
                     回复买家
                   </button>
                   <button 
+                    type="button"
+                    role="tab"
+                    aria-selected={isInternalNote}
                     onClick={() => setIsInternalNote(true)}
                     className={cn(
-                      "px-4 py-1.5 rounded-md text-xs font-medium transition-all",
-                      isInternalNote ? "bg-white text-[#F97316] shadow-sm" : "text-slate-500 hover:text-slate-700"
+                      'min-h-11 rounded-lg text-sm font-semibold transition-all active:scale-[0.98]',
+                      isInternalNote ? "bg-white text-[#F97316] shadow-sm" : "text-slate-600 hover:text-slate-800"
                     )}
                   >
                     内部备注
                   </button>
-                </div>
+              </div>
                 
-                <div className="flex flex-wrap items-center justify-end gap-2 flex-1 min-w-0 sm:ml-auto">
+                <div className="-mx-1 flex min-h-11 flex-nowrap items-center gap-2 overflow-x-auto px-1 pb-0.5 touch-pan-x [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                   {!isInternalNote && (
                     <div className="relative" ref={translationPopoverRef}>
                       <button
@@ -2467,18 +2346,18 @@ export default function TicketDetail({
                           setShowTranslationPopover((v) => !v);
                         }}
                         className={cn(
-                          "inline-flex items-center gap-1.5 px-3 py-1.5 border hover:bg-slate-50 rounded-lg text-xs font-medium transition-colors shadow-sm",
-                          showTranslationPopover ? "bg-slate-50 border-slate-300 text-slate-900" : "bg-white border-slate-200 text-slate-700"
+                          "inline-flex min-h-11 shrink-0 touch-manipulation items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors shadow-sm active:scale-[0.99]",
+                          showTranslationPopover ? "bg-slate-50 border-slate-300 text-slate-900" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
                         )}
                         title="查看翻译配置"
                       >
-                        <Languages className="w-3.5 h-3.5 text-slate-500 shrink-0" strokeWidth={2} />
+                        <Languages className="h-4 w-4 text-slate-500 shrink-0" strokeWidth={2} />
                         自动翻译
                         <ChevronUp className={cn("w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform", showTranslationPopover && "rotate-180")} />
                       </button>
 
                       {showTranslationPopover && (
-                        <div className="absolute right-0 bottom-full mb-2 w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+                        <div className="absolute right-0 bottom-full mb-2 w-[min(20rem,calc(100vw-1rem))] max-h-[min(70vh,28rem)] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200 sm:w-[320px] sm:max-h-none">
                           <div className="p-4 space-y-4">
                             <div className="flex items-center justify-between">
                               <div className="space-y-0.5">
@@ -2543,8 +2422,8 @@ export default function TicketDetail({
                         setShowTemplatePopover((v) => !v);
                       }}
                       className={cn(
-                        "flex items-center gap-1.5 px-3 py-1.5 border hover:bg-slate-50 rounded-lg text-xs font-medium transition-colors shadow-sm",
-                        showTemplatePopover ? "bg-slate-50 border-slate-300 text-slate-900" : "bg-white border-slate-200 text-slate-700"
+                        "inline-flex min-h-11 shrink-0 touch-manipulation items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors shadow-sm active:scale-[0.99]",
+                        showTemplatePopover ? "bg-slate-50 border-slate-300 text-slate-900" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
                       )}
                     >
                       插入模板
@@ -2552,7 +2431,7 @@ export default function TicketDetail({
                     </button>
 
                     {showTemplatePopover && (
-                      <div className="absolute right-0 bottom-full mb-2 w-[340px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+                      <div className="absolute right-0 bottom-full mb-2 w-[min(21.25rem,calc(100vw-1rem))] max-h-[min(70vh,24rem)] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200 sm:w-[340px] sm:max-h-none">
                         <div className="p-3 border-b border-slate-100 bg-slate-50/50">
                           <div className="relative">
                             <input
@@ -2669,7 +2548,36 @@ export default function TicketDetail({
                     )}
                   </div>
 
-                  <div className="relative" ref={aiPolishPopoverRef}>
+                  {!isInternalNote && (
+                    <div className="relative shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowTranslationPopover(false);
+                          setShowTemplatePopover(false);
+                          setShowAiPolishPopover(false);
+                          setShowEmojiPicker(false);
+                          void handleAiSuggest();
+                        }}
+                        disabled={isGeneratingDraft}
+                        className={cn(
+                          'inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-sm font-bold shadow-sm transition-colors active:scale-[0.99] touch-manipulation',
+                          'border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100',
+                          isGeneratingDraft && 'cursor-not-allowed opacity-50'
+                        )}
+                        title="基于知识库自动生成回复草稿"
+                      >
+                        {isGeneratingDraft ? (
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-4 w-4 shrink-0" />
+                        )}
+                        AI 回复
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="relative shrink-0" ref={aiPolishPopoverRef}>
                     <button
                       type="button"
                       onClick={() => {
@@ -2680,11 +2588,11 @@ export default function TicketDetail({
                       }}
                       disabled={isPolishing || !replyText.trim()}
                       className={cn(
-                        'flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-colors shadow-sm shrink-0',
+                        'inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-sm font-bold shadow-sm transition-colors active:scale-[0.99] touch-manipulation',
                         showAiPolishPopover
-                          ? 'bg-indigo-100 border-indigo-200 text-indigo-900'
-                          : 'bg-indigo-50 border-indigo-100 text-indigo-700 hover:bg-indigo-100',
-                        (!replyText.trim() || isPolishing) && 'opacity-50 cursor-not-allowed'
+                          ? 'border-indigo-200 bg-indigo-100 text-indigo-900'
+                          : 'border-indigo-100 bg-indigo-50 text-indigo-700 hover:bg-indigo-100',
+                        (!replyText.trim() || isPolishing) && 'cursor-not-allowed opacity-50'
                       )}
                       title={
                         !replyText.trim()
@@ -2693,21 +2601,21 @@ export default function TicketDetail({
                       }
                     >
                       {isPolishing ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                        <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
                       ) : (
-                        <Pencil className="w-3.5 h-3.5 shrink-0" />
+                        <Pencil className="h-4 w-4 shrink-0" />
                       )}
                       AI 润色
                       <ChevronUp
                         className={cn(
-                          'w-3.5 h-3.5 text-indigo-500/80 shrink-0 transition-transform',
+                          'h-3.5 w-3.5 shrink-0 text-indigo-500/80 transition-transform',
                           showAiPolishPopover && 'rotate-180'
                         )}
                       />
                     </button>
 
                     {showAiPolishPopover && (
-                      <div className="absolute right-0 bottom-full mb-2 w-[min(22rem,calc(100vw-2rem))] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
+                      <div className="absolute right-0 bottom-full mb-2 max-h-[min(70vh,28rem)] w-[min(22rem,calc(100vw-1rem))] overflow-y-auto overflow-x-hidden rounded-xl border border-slate-200 bg-white shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-200 z-50 sm:max-h-none">
                         <div className="p-2.5 border-b border-slate-100 bg-slate-50/50">
                           <p className="text-xs font-bold text-slate-900">选择语气</p>
                           <p className="text-[10px] text-slate-500 mt-0.5">点一项立即润色（风格固定为自动优化）</p>
@@ -2746,11 +2654,10 @@ export default function TicketDetail({
                     )}
                   </div>
                 </div>
-              </div>
-              </div>
+              </>
             )}
 
-            <div className="relative group">
+            <div className="relative group w-full">
               <textarea
                 placeholder={isInternalNote ? "在此输入仅内部可见的备注信息..." : "在此输入回复内容，Shift + Enter 换行"}
                 value={replyText}
@@ -2772,9 +2679,7 @@ export default function TicketDetail({
                 className={cn(
                   'w-full resize-none rounded-xl border bg-slate-50/50 p-4 text-sm outline-none transition-all placeholder:text-slate-400',
                   isReplyExpanded
-                    ? isMobile
-                      ? 'min-h-[72px] max-h-[28vh] overflow-y-auto'
-                      : 'min-h-[100px]'
+                    ? 'min-h-[72px] max-h-[28vh] overflow-y-auto'
                     : 'min-h-[46px] py-2.5',
                   isInternalNote 
                     ? "border-orange-100 focus:bg-white focus:border-orange-200 focus:ring-4 focus:ring-orange-500/5" 
@@ -2782,7 +2687,7 @@ export default function TicketDetail({
                 )}
               />
               <div className={cn(
-                "absolute right-3 bottom-3 flex items-center gap-2 transition-opacity",
+                "absolute right-2 bottom-2 flex items-center gap-2 transition-opacity",
                 isReplyExpanded ? "opacity-100" : "opacity-0 pointer-events-none"
               )}>
                   <div className="relative" ref={emojiPopoverRef}>
@@ -2796,8 +2701,8 @@ export default function TicketDetail({
                       }}
                       title="选择表情"
                       className={cn(
-                        "p-2 transition-colors rounded-lg",
-                        showEmojiPicker ? "bg-slate-100 text-slate-700" : "text-slate-400 hover:text-slate-600 hover:bg-slate-50"
+                        "inline-flex min-h-11 min-w-11 touch-manipulation items-center justify-center rounded-lg p-2 transition-colors",
+                        showEmojiPicker ? "bg-slate-100 text-slate-700" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
                       )}
                     >
                       <Smile className="w-4 h-4" />
@@ -2843,7 +2748,7 @@ export default function TicketDetail({
                     />
                     <label 
                       htmlFor="attachment-upload"
-                      className="p-2 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer inline-flex items-center justify-center rounded-lg hover:bg-slate-50"
+                      className="inline-flex min-h-11 min-w-11 cursor-pointer touch-manipulation items-center justify-center rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-600"
                       title="添加附件"
                     >
                       <Paperclip className="w-4 h-4" />
@@ -2853,78 +2758,49 @@ export default function TicketDetail({
             </div>
 
             {isReplyExpanded && (
-              <div className="flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top-1 duration-200">
-                <div className="flex items-center gap-4">
+                <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-top-1 duration-200 md:flex-row md:flex-wrap md:items-center md:justify-between md:gap-2">
                   {!isInternalNote && (
-                    <div className="flex items-center gap-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium text-slate-500">发送至:</span>
-                        <div className="flex items-center gap-2">
+                    <div className="flex w-full min-w-0 flex-col gap-2 md:w-auto md:flex-row md:items-center">
+                        <span className="shrink-0 text-left text-xs font-medium text-slate-500 md:inline">发送至</span>
+                        <div className="flex w-full min-w-0 gap-2">
                           <button
                             type="button"
                             onClick={() => setSendToCustomer((v) => !v)}
                             className={cn(
-                              'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all',
+                              'inline-flex min-h-11 flex-1 touch-manipulation items-center justify-center gap-1.5 rounded-xl border px-2 text-sm font-medium transition-all active:scale-[0.99]',
                               sendToCustomer
                                 ? 'border-blue-200 bg-blue-50 text-blue-900'
                                 : 'border-dashed border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50'
                             )}
                           >
-                            <span
-                              className={cn(
-                                'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border',
-                                sendToCustomer
-                                  ? 'border-blue-600 bg-blue-600 text-white'
-                                  : 'border-slate-300 bg-white'
-                              )}
-                              aria-hidden
-                            >
-                              {sendToCustomer && <Check className="w-2.5 h-2.5" strokeWidth={3} />}
-                            </span>
+                            <User className="h-4 w-4 shrink-0" />
                             客户
                           </button>
                           <button
                             type="button"
                             onClick={() => setSendToManager((v) => !v)}
                             className={cn(
-                              'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all',
+                              'inline-flex min-h-11 flex-1 touch-manipulation items-center justify-center gap-1.5 rounded-xl border px-2 text-sm font-medium transition-all active:scale-[0.99]',
                               sendToManager
-                                ? 'border-amber-200 bg-amber-50 text-amber-950'
+                                ? 'border-amber-200 bg-amber-50 text-amber-900'
                                 : 'border-dashed border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50'
                             )}
                           >
-                            <span
-                              className={cn(
-                                'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border',
-                                sendToManager
-                                  ? 'border-amber-600 bg-amber-600 text-white'
-                                  : 'border-slate-300 bg-white'
-                              )}
-                              aria-hidden
-                            >
-                              {sendToManager && <Check className="w-2.5 h-2.5" strokeWidth={3} />}
-                            </span>
-                            平台经理
+                            <ShieldCheck className="h-4 w-4 shrink-0" />
+                            <span className="hidden sm:inline">平台</span>经理
                           </button>
                         </div>
-                        {!outboundRecipientReady && (
-                          <span className="text-amber-600 text-[11px] font-medium w-full sm:w-auto">
-                            请至少选择一名收件人
-                          </span>
-                        )}
-                      </div>
                     </div>
                   )}
-                </div>
 
-                <div className="flex items-center gap-4 ml-auto">
+                <div className="flex w-full gap-2 md:ml-auto md:w-auto md:justify-end">
                   <button
                     type="button"
                     onClick={() => {
                       setIsReplyExpanded(false);
                       setReplyText('');
                     }}
-                    className="px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors"
+                    className="min-h-11 flex-1 touch-manipulation rounded-xl border border-transparent px-3 text-sm font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700 md:flex-none md:border-slate-200 md:bg-white md:shadow-sm"
                   >
                     取消
                   </button>
@@ -2938,36 +2814,29 @@ export default function TicketDetail({
                         : undefined
                     }
                     className={cn(
-                      'flex items-center gap-2 px-6 py-2 text-sm font-bold text-white rounded-lg shadow-sm transition-all',
+                      'flex min-h-11 flex-[1.15] touch-manipulation items-center justify-center gap-2 rounded-xl px-4 text-sm font-bold text-white shadow-sm transition-all active:scale-[0.99] md:flex-none md:px-6',
                       isInternalNote
-                        ? 'bg-[#F97316] hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed'
-                        : 'bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed'
+                        ? 'bg-[#F97316] hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-40'
+                        : 'bg-blue-600 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40'
                     )}
                   >
                     {isInternalNote ? '保存备注' : '发送'}
-                    <Send className="w-4 h-4" />
+                    <Send className="h-4 w-4 shrink-0" />
                   </button>
                 </div>
               </div>
             )}
           </div>
         </div>
+        </>
+        ) : null}
       </div>
       
       {/* Right Sidebar - Business Intelligence */}
-      {isMobile ? (
-        <Drawer
-          isOpen={isBusinessDrawerOpen}
-          onClose={() => setIsBusinessDrawerOpen(false)}
-          title="业务辅助信息"
-          position="right"
-        >
-          <div className="h-full flex flex-col overflow-hidden">
-            {renderBusinessSidebarContent()}
-          </div>
-        </Drawer>
-      ) : (
-        renderBusinessSidebarContent()
+      {activeTab !== 'chat' && (
+        <div className="flex flex-col overflow-hidden bg-slate-50 absolute inset-x-0 bottom-0 top-0 z-10 pt-[100px]">
+          {renderBusinessSidebarContent()}
+        </div>
       )}
       {/* Modals */}
       <InvoicePreviewModal 

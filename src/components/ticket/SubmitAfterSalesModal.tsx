@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { X, Search, Plus, Upload, Calendar, AlertCircle, Package, Sparkles, Loader2 } from 'lucide-react';
 import { cn, openFieldConfigPage } from '@/src/lib/utils';
+import { useIsMobile } from '@/src/hooks/useIsMobile';
 import { RETURN_CARRIER_DICT_ID, RETURN_CARRIER_SEED_ITEMS } from '@/src/lib/afterSalesFieldOptions';
 import { Order, AfterSalesType, type AfterSalesRecord } from '@/src/types';
 import { recognizeAfterSalesFromFeedback } from '@/src/services/geminiService';
@@ -51,6 +52,7 @@ export default function SubmitAfterSalesModal({
   onSubmit,
   apiSubmit,
 }: SubmitAfterSalesModalProps) {
+  const isMobile = useIsMobile();
   // If initialData exists, we initialize state with it (simulating an edit mode)
   const [searchOrderQuery, setSearchOrderQuery] = useState('');
   const [searchedOrder, setSearchedOrder] = useState<Order | null>(null);
@@ -183,8 +185,11 @@ export default function SubmitAfterSalesModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 max-h-[90vh]">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className={cn(
+        "bg-white shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200",
+        isMobile ? "w-full h-full rounded-none" : "w-full max-w-4xl rounded-2xl max-h-[90vh]"
+      )}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h2 className="text-lg font-bold text-slate-900">{initialData ? '修改售后工单' : '提交售后'}</h2>
@@ -248,7 +253,10 @@ export default function SubmitAfterSalesModal({
                       重新搜索
                     </button>
                   </div>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                  <div className={cn(
+                    "grid gap-4 text-xs",
+                    isMobile ? "grid-cols-2" : "grid-cols-4"
+                  )}>
                     <div>
                       <span className="text-slate-500 block mb-1">平台单号</span>
                       <span className="font-medium text-slate-900">{searchedOrder.platformOrderId}</span>
@@ -277,7 +285,10 @@ export default function SubmitAfterSalesModal({
               <div className="w-1 h-4 bg-[#F97316] rounded-full" />
               售后信息
             </h3>
-            <div className="grid grid-cols-3 gap-6">
+            <div className={cn(
+              "grid gap-6",
+              isMobile ? "grid-cols-1" : "grid-cols-3"
+            )}>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
                   <span className="text-red-500">*</span> 处理方式:
@@ -285,6 +296,7 @@ export default function SubmitAfterSalesModal({
                 <select 
                   value={type}
                   onChange={(e) => setType(e.target.value as AfterSalesType)}
+                  title="处理方式"
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
                 >
                   <option value={AfterSalesType.REFUND}>退款 (Refund)</option>
@@ -300,6 +312,7 @@ export default function SubmitAfterSalesModal({
                 <select 
                   value={priority}
                   onChange={(e) => setPriority(e.target.value as AfterSalesPriority)}
+                  title="优先级"
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
                 >
                   <option value="low">低</option>
@@ -309,7 +322,11 @@ export default function SubmitAfterSalesModal({
               </div>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-slate-500">售后状态:</label>
-                <select disabled className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-sm text-slate-500">
+                <select 
+                  disabled 
+                  title="售后状态"
+                  className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-sm text-slate-500"
+                >
                   <option>已提交</option>
                 </select>
               </div>
@@ -318,7 +335,10 @@ export default function SubmitAfterSalesModal({
             {/* Dynamic Fields based on Type */}
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-4">
               {type === AfterSalesType.REFUND && (
-                <div className="grid grid-cols-2 gap-6">
+                <div className={cn(
+                  "grid gap-6",
+                  isMobile ? "grid-cols-1" : "grid-cols-2"
+                )}>
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-slate-500 flex items-center justify-between gap-1">
                       <span className="flex items-center gap-1">
@@ -381,6 +401,7 @@ export default function SubmitAfterSalesModal({
                   setAfterSalesCategory(v);
                   setProblemType(v ? AFTER_SALES_CATEGORY_LABELS[v] || v : '');
                 }}
+                title="售后类型"
                 className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
               >
                 <option value="">请选择售后类型</option>
@@ -396,7 +417,10 @@ export default function SubmitAfterSalesModal({
                   {/* 退款执行方式选择 */}
                   <div className="col-span-2 space-y-2 mt-2 border-t border-slate-100 pt-4">
                     <label className="text-xs font-bold text-slate-700">退款执行方式</label>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className={cn(
+                      "grid gap-4",
+                      isMobile ? "grid-cols-1" : "grid-cols-2"
+                    )}>
                       <label 
                         className={cn(
                           "border rounded-xl p-4 cursor-pointer transition-all", 
@@ -448,7 +472,10 @@ export default function SubmitAfterSalesModal({
               )}
 
               {(type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE) && (
-                <div className="grid grid-cols-2 gap-6">
+                <div className={cn(
+                  "grid gap-6",
+                  isMobile ? "grid-cols-1" : "grid-cols-2"
+                )}>
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
                       <span className="text-red-500">*</span> 退回物流单号:
@@ -477,6 +504,7 @@ export default function SubmitAfterSalesModal({
                     <select
                       value={returnCarrier}
                       onChange={(e) => setReturnCarrier(e.target.value)}
+                      title="退回承运商"
                       className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
                     >
                       <option value="">请选择承运商</option>
@@ -491,7 +519,10 @@ export default function SubmitAfterSalesModal({
               )}
 
               {(type === AfterSalesType.REISSUE || type === AfterSalesType.EXCHANGE) && (
-                <div className="grid grid-cols-2 gap-6">
+                <div className={cn(
+                  "grid gap-6",
+                  isMobile ? "grid-cols-1" : "grid-cols-2"
+                )}>
                   <div className="space-y-1.5">
                     <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
                       <span className="text-red-500">*</span> 重发SKU:
@@ -517,7 +548,10 @@ export default function SubmitAfterSalesModal({
               )}
             </div>
 
-            <div className="grid grid-cols-3 gap-6">
+            <div className={cn(
+              "grid gap-6",
+              isMobile ? "grid-cols-1" : "grid-cols-3"
+            )}>
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-slate-500 flex items-center justify-between">
                   <span className="flex items-center gap-1">
@@ -531,7 +565,10 @@ export default function SubmitAfterSalesModal({
                     管理签收方
                   </button>
                 </label>
-                <select className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                <select 
+                  title="签收方"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm"
+                >
                   <option value="">选择退件仓</option>
                   <option value="us_east">美东 1 号仓 (NJ)</option>
                   <option value="us_west">美西退件仓 (CA)</option>

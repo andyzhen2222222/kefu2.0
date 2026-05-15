@@ -5,6 +5,7 @@ import { cn } from '@/src/lib/utils';
 import { useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { useIsMobile } from '@/src/hooks/useIsMobile';
 
 /** 将整页长图按 A4 高度分页写入 PDF，避免单页超高导致 jsPDF 异常或内容丢失 */
 function canvasToMultiPagePdf(canvas: HTMLCanvasElement): jsPDF {
@@ -154,6 +155,7 @@ export default function InvoicePreviewModal({
   lang = 'en',
   onSendToCustomer,
 }: InvoicePreviewModalProps) {
+  const isMobile = useIsMobile();
   const [isGenerating, setIsGenerating] = useState(false);
   const captureRef = useRef<HTMLDivElement>(null);
 
@@ -305,10 +307,13 @@ export default function InvoicePreviewModal({
     if (template === 'receipt') {
       return (
         <div
-          className="max-w-3xl mx-auto bg-white p-16 shadow-sm rounded-xl font-sans text-slate-700 relative"
+          className={cn(
+            "max-w-3xl mx-auto bg-white shadow-sm rounded-xl font-sans text-slate-700 relative",
+            isMobile ? "p-6" : "p-16"
+          )}
           style={{ backgroundColor: '#ffffff', color: '#334155' }}
         >
-          <div className="flex justify-between items-start mb-10 relative z-10">
+          <div className={cn("flex justify-between items-start mb-10 relative z-10", isMobile && "flex-col gap-6")}>
             <div>
               {shopLogoUrl ? (
                 <img
@@ -317,7 +322,7 @@ export default function InvoicePreviewModal({
                   className="w-12 h-12 rounded-xl object-cover mb-6 border border-slate-200"
                 />
               ) : null}
-              <h1 className="text-4xl font-bold text-slate-900 tracking-tight mb-2" style={{ color: '#0f172a' }}>
+              <h1 className={cn("font-bold text-slate-900 tracking-tight mb-2", isMobile ? "text-2xl" : "text-4xl")} style={{ color: '#0f172a' }}>
                 {t.receipt}
               </h1>
               <p className="text-slate-500 font-mono text-sm tracking-wider" style={{ color: '#64748b' }}>
@@ -325,7 +330,7 @@ export default function InvoicePreviewModal({
               </p>
             </div>
 
-            <div className="text-right">
+            <div className={isMobile ? "text-left" : "text-right"}>
               <h3 className="font-bold text-slate-900 text-xl tracking-tight mb-2" style={{ color: '#0f172a' }}>
                 {store.legalName}
               </h3>
@@ -391,7 +396,10 @@ export default function InvoicePreviewModal({
 
           <div className="flex justify-end mb-6">
             <div
-              className="w-80 bg-slate-900 text-white p-6 rounded-lg flex justify-between items-center"
+              className={cn(
+                "bg-slate-900 text-white p-6 rounded-lg flex justify-between items-center",
+                isMobile ? "w-full" : "w-80"
+              )}
               style={{ backgroundColor: '#0f172a', color: '#ffffff' }}
             >
               <span className="text-xs uppercase tracking-widest font-bold opacity-80">{t.total}</span>
@@ -413,10 +421,16 @@ export default function InvoicePreviewModal({
 
     if (template === 'standard') {
       return (
-        <div className="max-w-3xl mx-auto bg-white p-16 shadow-sm rounded-xl font-sans text-slate-700 relative" style={{ backgroundColor: '#ffffff', color: '#334155' }}>
+        <div 
+          className={cn(
+            "max-w-3xl mx-auto bg-white shadow-sm rounded-xl font-sans text-slate-700 relative",
+            isMobile ? "p-6" : "p-16"
+          )} 
+          style={{ backgroundColor: '#ffffff', color: '#334155' }}
+        >
           <div className="absolute top-0 right-16 w-32 h-32 bg-slate-50 rounded-full -translate-y-1/2 opacity-50 blur-2xl" style={{ backgroundColor: '#f8fafc' }}></div>
           
-          <div className="flex justify-between items-start mb-16 relative z-10">
+          <div className={cn("flex justify-between items-start mb-16 relative z-10", isMobile && "flex-col gap-8")}>
             <div>
               {shopLogoUrl ? (
                 <img
@@ -425,17 +439,17 @@ export default function InvoicePreviewModal({
                   className="w-12 h-12 rounded-xl object-cover mb-6 border border-slate-200"
                 />
               ) : null}
-              <h1 className="text-5xl font-bold text-slate-900 tracking-tighter mb-2" style={{ color: '#0f172a' }}>{t.invoice}</h1>
+              <h1 className={cn("font-bold text-slate-900 tracking-tighter mb-2", isMobile ? "text-3xl" : "text-5xl")} style={{ color: '#0f172a' }}>{t.invoice}</h1>
               <p className="text-slate-500 font-mono text-sm tracking-wider" style={{ color: '#64748b' }}>#INV-{order.id.replace('ORD-', '')}</p>
             </div>
-            <div className="text-right">
+            <div className={isMobile ? "text-left" : "text-right"}>
               <h3 className="font-bold text-slate-900 text-xl tracking-tight mb-2" style={{ color: '#0f172a' }}>{store.legalName}</h3>
               <p className="text-slate-500 text-sm leading-relaxed whitespace-pre-line" style={{ color: '#64748b' }}>{store.address}</p>
               <p className="text-slate-400 text-sm mt-3 font-mono" style={{ color: '#94a3b8' }}>VAT: {store.vatNumber}</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-12 mb-16">
+          <div className={cn("grid gap-12 mb-16", isMobile ? "grid-cols-1" : "grid-cols-2")}>
             <div className="p-6 bg-slate-50/50 rounded-2xl border border-slate-100" style={{ backgroundColor: '#f8fafc', border: '1px solid #f1f5f9' }}>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3" style={{ color: '#94a3b8' }}>{t.billedTo}</p>
               <p className="font-bold text-slate-900 text-lg tracking-tight mb-1" style={{ color: '#0f172a' }}>{customer?.name || 'Unknown Customer'}</p>
@@ -482,7 +496,10 @@ export default function InvoicePreviewModal({
           </table>
 
           <div className="flex justify-end">
-            <div className="w-80 bg-slate-50 rounded-2xl p-6 border border-slate-100" style={{ backgroundColor: '#f8fafc', border: '1px solid #f1f5f9' }}>
+            <div className={cn(
+              "bg-slate-50 rounded-2xl p-6 border border-slate-100",
+              isMobile ? "w-full" : "w-80"
+            )} style={{ backgroundColor: '#f8fafc', border: '1px solid #f1f5f9' }}>
               <div className="space-y-4 text-sm">
                 <div className="flex justify-between text-slate-500 items-baseline" style={{ color: '#64748b' }}>
                   <span>{t.subtotal}</span>
@@ -517,7 +534,10 @@ export default function InvoicePreviewModal({
 
       return (
         <div
-          className="max-w-3xl mx-auto bg-white p-16 shadow-sm rounded-xl font-sans text-slate-700 relative"
+          className={cn(
+            "max-w-3xl mx-auto bg-white shadow-sm rounded-xl font-sans text-slate-700 relative",
+            isMobile ? "p-6" : "p-16"
+          )}
           style={{ backgroundColor: '#ffffff', color: '#334155' }}
         >
           <div
@@ -525,7 +545,7 @@ export default function InvoicePreviewModal({
             style={{ backgroundColor: '#f8fafc' }}
           />
 
-          <div className="flex justify-between items-start mb-10 relative z-10">
+          <div className={cn("flex justify-between items-start mb-10 relative z-10", isMobile && "flex-col gap-6")}>
             <div>
               {shopLogoUrl ? (
                 <img
@@ -534,7 +554,7 @@ export default function InvoicePreviewModal({
                   className="w-12 h-12 rounded-xl object-cover mb-6 border border-slate-200"
                 />
               ) : null}
-              <h1 className="text-4xl font-bold text-slate-900 tracking-tight mb-2" style={{ color: '#0f172a' }}>
+              <h1 className={cn("font-bold text-slate-900 tracking-tight mb-2", isMobile ? "text-2xl" : "text-4xl")} style={{ color: '#0f172a' }}>
                 Commercial Invoice
               </h1>
               <p className="text-slate-500 font-mono text-sm tracking-wider" style={{ color: '#64748b' }}>
@@ -543,7 +563,7 @@ export default function InvoicePreviewModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-12 mb-8 relative z-10">
+          <div className={cn("grid gap-12 mb-8 relative z-10", isMobile ? "grid-cols-1" : "grid-cols-2")}>
             {/* Seller Details */}
             <div className="p-6 bg-slate-50/50 rounded-2xl border border-slate-100" style={{ border: '1px solid #f1f5f9' }}>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4" style={{ color: '#94a3b8' }}>
@@ -679,7 +699,10 @@ export default function InvoicePreviewModal({
 
           {/* Totals (align with template fields) */}
           <div className="flex justify-end relative z-10">
-            <div className="w-[460px] max-w-full bg-slate-50 rounded-2xl p-6 border border-slate-100" style={{ border: '1px solid #f1f5f9' }}>
+            <div className={cn(
+              "bg-slate-50 rounded-2xl p-6 border border-slate-100",
+              isMobile ? "w-full" : "w-[460px] max-w-full"
+            )} style={{ border: '1px solid #f1f5f9' }}>
               <div className="space-y-3 text-sm">
                 <div className="flex justify-between text-slate-500 items-baseline" style={{ color: '#64748b' }}>
                   <span className="text-xs font-bold uppercase tracking-wider leading-snug break-words">Sum of total price</span>
@@ -736,8 +759,11 @@ export default function InvoicePreviewModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-slate-100 rounded-2xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className={cn(
+        "bg-slate-100 shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200",
+        isMobile ? "w-full h-full rounded-none" : "w-full max-w-5xl max-h-[90vh] rounded-2xl"
+      )}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-slate-200 shrink-0">
         <h2 className="text-lg font-bold text-slate-900">发票预览 - 统一模版</h2>
@@ -753,7 +779,7 @@ export default function InvoicePreviewModal({
         </div>
 
         {/* Body：整块 ref 供 html2canvas 捕获（避免 getElementById 与异步下载被浏览器拦截） */}
-        <div className="flex-1 overflow-y-auto p-8">
+        <div className={cn("flex-1 overflow-y-auto", isMobile ? "p-4" : "p-8")}>
           <div ref={captureRef} id="invoice-capture-area" className="min-h-[120px] flex flex-col items-stretch">
             {renderTemplate()}
           </div>

@@ -380,6 +380,8 @@ export function TicketDetailStatusChips({
   sentimentRefreshLoading = false,
   onSentimentRefresh,
   renderTicketSummaryButton,
+  /** 移动端等窄屏：仅保留 SLA 与订单状态，减少顶栏占用 */
+  compact = false,
 }: {
   ticket: Ticket;
   order?: Order | null;
@@ -397,6 +399,7 @@ export function TicketDetailStatusChips({
   onSentimentRefresh?: () => void | Promise<void>;
   /** 是否展示工单摘要按钮（如果外部传入了） */
   renderTicketSummaryButton?: ReactNode;
+  compact?: boolean;
 }) {
   const ord = orderPresentation(order);
   const sent = sentimentPresentation(ticket.sentiment);
@@ -505,9 +508,14 @@ export function TicketDetailStatusChips({
     },
   ];
 
+  const visibleKeys = compact ? (['sla', 'order'] as const) : null;
+  const chipsToRender = visibleKeys
+    ? chips.filter((c) => visibleKeys.includes(c.key as (typeof visibleKeys)[number]))
+    : chips;
+
   return (
-    <div className="flex flex-wrap items-center gap-2 mt-2">
-      {chips.map((c) => {
+    <div className={cn('flex flex-wrap items-center gap-2', compact ? 'mt-1.5' : 'mt-2')}>
+      {chipsToRender.map((c) => {
         if (c.key === 'conv' && renderConversationAside && onMessageProcessingStatusChange) {
           return null;
         }
@@ -525,7 +533,8 @@ export function TicketDetailStatusChips({
             key={c.key}
             title={c.title}
             className={cn(
-              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors hover:shadow-sm',
+              'inline-flex items-center gap-1.5 rounded-lg font-medium transition-colors hover:shadow-sm',
+              compact ? 'gap-1 px-2 py-0.5 text-[10px]' : 'gap-1.5 px-2.5 py-1 text-[11px]',
               (c.key === 'intent' || c.key === 'sentiment') && intentRefreshable ? 'cursor-default' : 'cursor-help',
               c.chip
             )}
@@ -534,7 +543,7 @@ export function TicketDetailStatusChips({
           </span>
         );
       })}
-      {renderTicketSummaryButton && renderTicketSummaryButton}
+      {!compact && renderTicketSummaryButton && renderTicketSummaryButton}
     </div>
   );
 }

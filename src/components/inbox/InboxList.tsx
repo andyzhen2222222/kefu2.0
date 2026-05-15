@@ -20,6 +20,7 @@ import { getTicketSubjectForDisplay } from '@/src/components/settings/Translatio
 import { platformGroupLabelForTicket } from '@/src/lib/platformLabels';
 import { InboxListPlatformMark } from '@/src/components/inbox/InboxListPlatformMark';
 import { useAuth } from '@/src/hooks/useAuth';
+import { useIsMobile } from '@/src/hooks/useIsMobile';
 import {
   intellideskConfigured,
   intellideskTenantId,
@@ -84,6 +85,7 @@ interface InboxListProps {
   orders?: Record<string, Order>;
   customers?: Record<string, Customer>;
   selectedTicketId?: string;
+  className?: string;
   /** 例如 ?filter=unread，与仪表盘入口一致 */
   mailboxSearchSuffix?: string;
   /** 母系统收件箱同步完成后刷新列表（由 MailboxPage 触发重新拉取） */
@@ -99,6 +101,8 @@ interface InboxListProps {
   listReloading?: boolean;
   /** 联调：点击后触发父组件重新请求工单列表 */
   onReloadList?: () => void;
+  /** 点击列表进入详情的路径前缀，默认 `/mailbox`；H5 传 `/ticket` */
+  ticketDetailPathPrefix?: string;
 }
 
 export default function InboxList({
@@ -106,7 +110,9 @@ export default function InboxList({
   orders = {},
   customers = {},
   selectedTicketId,
+  className,
   mailboxSearchSuffix = '',
+  ticketDetailPathPrefix = '/mailbox',
   onInboxSynced,
   onTicketHover,
   listSearchQuery: listSearchQueryProp,
@@ -117,6 +123,7 @@ export default function InboxList({
 }: InboxListProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const isMobile = useIsMobile();
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const searchControlled = typeof onListSearchQueryChange === 'function';
   const searchQuery = searchControlled ? (listSearchQueryProp ?? '') : localSearchQuery;
@@ -457,7 +464,10 @@ export default function InboxList({
   };
 
   return (
-    <div className="w-[320px] flex flex-col bg-white border-r border-slate-200/90 shrink-0 h-full">
+    <div className={cn(
+      "flex flex-col bg-white border-r border-slate-200/90 shrink-0 h-full",
+      className || "w-[320px]"
+    )}>
       {/* Header & Search */}
       <div className="p-4 border-b border-slate-200/90 space-y-2.5">
         <div className="flex items-center justify-between gap-2">
@@ -485,7 +495,10 @@ export default function InboxList({
               )}
             </button>
             <div className="relative group">
-              <button className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors">
+              <button 
+                title="选择排序方式"
+                className="p-2 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors"
+              >
                 <ArrowUpDown className="w-4 h-4" />
               </button>
               <div className="absolute right-0 top-full mt-1 w-36 bg-white border border-slate-200 rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 py-1">
@@ -511,6 +524,7 @@ export default function InboxList({
             </div>
             <button 
               onClick={() => setShowFilters(!showFilters)}
+              title={showFilters ? "收起筛选" : "展开筛选"}
               className={cn(
                 "p-2 rounded-lg transition-colors",
                 showFilters ? "bg-orange-50 text-[#F97316]" : "text-slate-500 hover:bg-slate-100"
@@ -542,6 +556,7 @@ export default function InboxList({
               <select
                 value={filterChannel}
                 onChange={(e) => setFilterChannel(e.target.value)}
+                title="选择店铺"
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
               >
                 <option value="">全部店铺</option>
@@ -554,6 +569,7 @@ export default function InboxList({
               <select
                 value={filterIntent}
                 onChange={(e) => setFilterIntent(e.target.value)}
+                title="选择售后类型"
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
               >
                 <option value="">全部售后类型</option>
@@ -566,6 +582,7 @@ export default function InboxList({
               <select
                 value={filterSentiment}
                 onChange={(e) => setFilterSentiment(e.target.value)}
+                title="选择买家情绪"
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
               >
                 <option value="">全部买家情绪</option>
@@ -578,6 +595,7 @@ export default function InboxList({
               <select
                 value={filterOrderStatus}
                 onChange={(e) => setFilterOrderStatus(e.target.value)}
+                title="选择订单状态"
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
               >
                 <option value="">全部订单状态</option>
@@ -590,6 +608,7 @@ export default function InboxList({
               <select
                 value={filterConversationStatus}
                 onChange={(e) => setFilterConversationStatus(e.target.value as ConversationStatusFilter)}
+                title="选择会话状态"
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
               >
                 <option value="">全部会话</option>
@@ -600,6 +619,7 @@ export default function InboxList({
               <select
                 value={filterSla}
                 onChange={(e) => setFilterSla(e.target.value as SlaFilter)}
+                title="选择 SLA 状态"
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
               >
                 <option value="">全部 SLA</option>
@@ -757,11 +777,17 @@ export default function InboxList({
                             key={ticket.id}
                             role="button"
                             tabIndex={0}
-                            onClick={() => navigate(`/mailbox/${ticket.id}${mailboxSearchSuffix}`)}
+                            onClick={() =>
+                              navigate(
+                                `${ticketDetailPathPrefix.replace(/\/$/, '')}/${ticket.id}${mailboxSearchSuffix}`
+                              )
+                            }
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault();
-                                navigate(`/mailbox/${ticket.id}${mailboxSearchSuffix}`);
+                                navigate(
+                                  `${ticketDetailPathPrefix.replace(/\/$/, '')}/${ticket.id}${mailboxSearchSuffix}`
+                                );
                               }
                             }}
                             onMouseEnter={() => onTicketHover?.(ticket.id)}
@@ -832,26 +858,28 @@ export default function InboxList({
               </div>
 
               {ticketsForSelectedShop.length > 0 ? (
-                <div className="shrink-0 border-t border-slate-200/80 bg-white px-2 py-2">
-                  <div className="flex items-center justify-between gap-2">
+                <div className="shrink-0 border-t border-slate-200/80 bg-white px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:px-2 md:pb-2">
+                  <div className="flex items-stretch gap-2 md:items-center md:justify-between">
                     <button
                       type="button"
                       disabled={safeShopPage <= 0}
                       onClick={() => setShopTicketsPage((p) => Math.max(0, p - 1))}
                       className={cn(
-                        'inline-flex items-center gap-0.5 rounded-lg border px-2 py-1.5 text-[11px] font-medium transition-colors',
+                        'inline-flex min-h-11 flex-1 items-center justify-center gap-1 rounded-xl border px-3 text-sm font-medium transition-colors active:scale-[0.99] md:min-h-0 md:flex-initial md:gap-0.5 md:rounded-lg md:px-2 md:py-1.5 md:text-[11px]',
                         safeShopPage <= 0
                           ? 'cursor-not-allowed border-slate-100 text-slate-300'
-                          : 'border-slate-200/90 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                          : 'border-slate-200/90 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                       )}
                     >
-                      <ChevronLeft className="h-3.5 w-3.5" />
+                      <ChevronLeft className="h-4 w-4 md:h-3.5 md:w-3.5" />
                       上一页
                     </button>
-                    <span className="tabular-nums text-[11px] text-slate-500">
-                      {safeShopPage + 1} / {shopTotalPages}
-                      <span className="text-slate-300"> · </span>
-                      {ticketsForSelectedShop.length} 条
+                    <span className="flex min-w-0 flex-[0.8] items-center justify-center tabular-nums text-xs text-slate-600 md:flex-initial md:text-[11px] md:text-slate-500">
+                      <span className="truncate text-center">
+                        {safeShopPage + 1} / {shopTotalPages}
+                        <span className="text-slate-300"> · </span>
+                        {ticketsForSelectedShop.length} 条
+                      </span>
                     </span>
                     <button
                       type="button"
@@ -860,14 +888,14 @@ export default function InboxList({
                         setShopTicketsPage((p) => Math.min(p + 1, Math.max(0, shopTotalPages - 1)))
                       }
                       className={cn(
-                        'inline-flex items-center gap-0.5 rounded-lg border px-2 py-1.5 text-[11px] font-medium transition-colors',
+                        'inline-flex min-h-11 flex-1 items-center justify-center gap-1 rounded-xl border px-3 text-sm font-medium transition-colors active:scale-[0.99] md:min-h-0 md:flex-initial md:gap-0.5 md:rounded-lg md:px-2 md:py-1.5 md:text-[11px]',
                         safeShopPage >= shopTotalPages - 1
                           ? 'cursor-not-allowed border-slate-100 text-slate-300'
-                          : 'border-slate-200/90 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+                          : 'border-slate-200/90 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                       )}
                     >
                       下一页
-                      <ChevronRight className="h-3.5 w-3.5" />
+                      <ChevronRight className="h-4 w-4 md:h-3.5 md:w-3.5" />
                     </button>
                   </div>
                 </div>

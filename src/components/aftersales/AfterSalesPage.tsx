@@ -378,18 +378,22 @@ export default function AfterSalesPage() {
   return (
     <div className="flex flex-col h-full bg-slate-50">
       {/* Header */}
-      <div className="bg-white border-b border-slate-200 px-8 py-6">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">售后管理</h1>
-            <p className="text-sm text-slate-500 mt-1">处理退款、退货及换货申请</p>
+      <div className="border-b border-slate-200 bg-white px-4 py-4 sm:px-8 sm:py-6">
+        <div className="mb-4 flex flex-col gap-4 sm:mb-6 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+              售后管理
+            </h1>
+            <p className="mt-1 text-[13px] leading-snug text-slate-600 sm:text-sm sm:text-slate-500">
+              处理退款、退货及换货申请
+            </p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex shrink-0 flex-wrap items-stretch gap-2 sm:items-center sm:gap-3">
             <button 
               onClick={handleExport}
-              className="flex items-center gap-2 px-4 py-2 border border-slate-200 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 sm:flex-initial sm:px-4 sm:py-2"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-4 h-4 shrink-0" />
               导出数据
             </button>
             <button 
@@ -397,9 +401,9 @@ export default function AfterSalesPage() {
                 setEditingRecord(undefined);
                 setIsSubmitModalOpen(true);
               }}
-              className="flex items-center gap-2 px-4 py-2 bg-[#F97316] text-white rounded-xl text-sm font-bold hover:bg-[#ea580c] transition-colors shadow-sm"
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#F97316] px-3 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#ea580c] sm:flex-initial sm:px-4 sm:py-2"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4 shrink-0" />
               手动登记售后
             </button>
           </div>
@@ -407,26 +411,27 @@ export default function AfterSalesPage() {
       </div>
 
       {/* Filters */}
-      <div className="bg-white border-b border-slate-200 px-8 py-4">
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+      <div className="border-b border-slate-200 bg-white px-4 py-3 sm:px-8 sm:py-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+          <div className="relative max-w-md flex-1 min-w-0">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="搜索平台订单号、内单号、商品、问题、反馈…"
-              className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+              placeholder="搜索订单号、商品、问题…"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 text-sm placeholder:text-slate-500 focus:border-[#F97316] focus:outline-none focus:ring-2 focus:ring-[#F97316]/20"
+              title="搜索平台订单号、内单号、商品、问题、反馈"
             />
           </div>
           
-          <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl">
+          <div className="flex min-w-0 items-center gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1 sm:gap-2">
             {(['all', ...Object.values(AfterSalesStatus)] as const).map((status) => (
               <button
                 key={status}
                 onClick={() => setActiveStatus(status)}
                 className={cn(
-                  "px-4 py-1.5 text-xs font-bold rounded-lg transition-all",
+                  'shrink-0 rounded-lg px-3 py-1.5 text-xs font-bold transition-all sm:px-4',
                   activeStatus === status 
                     ? "bg-white text-slate-900 shadow-sm" 
                     : "text-slate-500 hover:text-slate-700"
@@ -523,9 +528,10 @@ export default function AfterSalesPage() {
       </div>
 
       {/* Table Content */}
-      <div className="flex-1 overflow-auto p-8">
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-          <table className="w-full text-sm text-left border-collapse table-fixed">
+      <div className="flex-1 overflow-auto p-4 sm:p-8">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] table-fixed border-collapse text-left text-sm">
             <thead>
               <tr className="bg-slate-50/50 border-b border-slate-200">
                 <th className="pl-6 pr-2 py-3 w-[5.5rem] font-bold text-slate-600 text-[11px] uppercase tracking-wide">
@@ -674,15 +680,16 @@ export default function AfterSalesPage() {
               })}
             </tbody>
           </table>
-          
+          </div>
+
           {/* Pagination */}
-          <div className="px-6 py-4 bg-slate-50/50 border-t border-slate-200 flex items-center justify-between">
-            <span className="text-xs text-slate-500">
+          <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
+            <span className="text-xs leading-relaxed text-slate-600 sm:text-slate-500">
               {filteredRecords.length === 0
                 ? '无匹配记录'
                 : `共 ${filteredRecords.length} 条记录（已应用搜索与筛选）`}
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button disabled className="px-3 py-1 border border-slate-200 rounded-lg text-xs font-medium text-slate-400 bg-white">上一页</button>
               <button className="px-3 py-1 bg-[#F97316] text-white rounded-lg text-xs font-bold shadow-sm">1</button>
               <button disabled className="px-3 py-1 border border-slate-200 rounded-lg text-xs font-medium text-slate-400 bg-white">下一页</button>

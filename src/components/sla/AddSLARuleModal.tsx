@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, Clock, AlertTriangle } from 'lucide-react';
+import { useIsMobile } from '@/src/hooks/useIsMobile';
+import { cn } from '@/src/lib/utils';
 
 export type NewSlaRulePayload = {
   name: string;
@@ -57,6 +59,7 @@ export default function AddSLARuleModal({
   initialData = null,
   platforms = [],
 }: AddSLARuleModalProps) {
+  const isMobile = useIsMobile();
   const [name, setName] = useState('');
   const [platform, setPlatform] = useState('all');
   const [timeoutHours, setTimeoutHours] = useState(24);
@@ -102,8 +105,11 @@ export default function AddSLARuleModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className={cn(
+        "bg-white shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200",
+        isMobile ? "w-full h-full rounded-none" : "w-full max-w-lg rounded-2xl"
+      )}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h2 className="text-lg font-bold text-slate-900">{initialData ? '编辑 SLA 规则' : '新增 SLA 规则'}</h2>
           <button
@@ -115,71 +121,72 @@ export default function AddSLARuleModal({
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto max-h-[70vh] space-y-6">
-          <div className="space-y-2">
-            <label className="text-sm font-bold text-slate-700">规则名称</label>
-            <input
-              type="text"
-              placeholder="例如：Amazon 标准回复时效"
-              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-bold text-slate-700">适用平台</label>
-            <select
-              title="适用平台"
-              className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
-              value={platform}
-              onChange={(e) => setPlatform(e.target.value)}
-            >
-              <option value="all">所有平台</option>
-              {platforms && platforms.length > 0 ? (
-                platforms.map((p) => (
-                  <option key={p.value} value={p.value}>
-                    {p.label}
-                  </option>
-                ))
-              ) : (
-                <>
-                  <option value="amazon">Amazon</option>
-                  <option value="ebay">eBay</option>
-                  <option value="shopify">Shopify</option>
-                </>
-              )}
-            </select>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
+        <div className={cn("overflow-y-auto", isMobile ? "flex-1 p-4" : "p-6 max-h-[70vh]")}>
+          <div className="space-y-6">
             <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
-                <Clock className="w-4 h-4 text-slate-400" />
-                目标回复时间 (小时)
-              </label>
+              <label className="text-sm font-bold text-slate-700">规则名称</label>
               <input
-                type="number"
-                min={1}
+                type="text"
+                placeholder="例如：Amazon 标准回复时效"
                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
-                value={timeoutHours}
-                onChange={(e) => setTimeoutHours(Number(e.target.value) || 1)}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
               />
             </div>
+
             <div className="space-y-2">
-              <label className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
-                <AlertTriangle className="w-4 h-4 text-amber-500" />
-                预警时间 (剩余小时)
-              </label>
-              <input
-                type="number"
-                min={1}
+              <label className="text-sm font-bold text-slate-700">适用平台</label>
+              <select
+                title="适用平台"
                 className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
-                value={warningHours}
-                onChange={(e) => setWarningHours(Number(e.target.value) || 1)}
-              />
+                value={platform}
+                onChange={(e) => setPlatform(e.target.value)}
+              >
+                <option value="all">所有平台</option>
+                {platforms && platforms.length > 0 ? (
+                  platforms.map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {p.label}
+                    </option>
+                  ))
+                ) : (
+                  <>
+                    <option value="amazon">Amazon</option>
+                    <option value="ebay">eBay</option>
+                    <option value="shopify">Shopify</option>
+                  </>
+                )}
+              </select>
             </div>
-          </div>
+
+            <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-2")}>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
+                  <Clock className="w-4 h-4 text-slate-400" />
+                  目标回复时间 (小时)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+                  value={timeoutHours}
+                  onChange={(e) => setTimeoutHours(Number(e.target.value) || 1)}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-500" />
+                  预警时间 (剩余小时)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+                  value={warningHours}
+                  onChange={(e) => setWarningHours(Number(e.target.value) || 1)}
+                />
+              </div>
+            </div>
 
           <div className="space-y-2">
             <label className="text-sm font-bold text-slate-700">工作时间计算</label>
@@ -205,6 +212,7 @@ export default function AddSLARuleModal({
                 <span className="text-sm font-medium text-slate-700">仅工作日 (跳过周末)</span>
               </label>
             </div>
+          </div>
           </div>
         </div>
 

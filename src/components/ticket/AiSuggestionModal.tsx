@@ -1,6 +1,8 @@
 import React from 'react';
 import { X, RefreshCw, Check, Loader2, Sparkles, Languages } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
+import { useIsMobile } from '@/src/hooks/useIsMobile';
+
 interface AiSuggestionModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -18,12 +20,16 @@ export default function AiSuggestionModal({
   onAdopt,
   onRefresh,
 }: AiSuggestionModalProps) {
+  const isMobile = useIsMobile();
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
       <div 
-        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col animate-in zoom-in-95 slide-in-from-bottom-4 duration-300"
+        className={cn(
+          "bg-white shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 slide-in-from-bottom-4 duration-300",
+          isMobile ? "w-full h-full rounded-none" : "w-full max-w-2xl rounded-2xl"
+        )}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

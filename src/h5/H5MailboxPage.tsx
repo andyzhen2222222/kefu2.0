@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
-import InboxList from './InboxList';
-import TicketDetail from '../ticket/TicketDetail';
+import InboxList from '@/src/components/inbox/InboxList';
+import H5TicketDetail from './H5TicketDetail';
 import {
   Ticket,
   TicketStatus,
@@ -13,7 +13,7 @@ import {
 } from '@/src/types';
 import { useAuth } from '@/src/hooks/useAuth';
 import { useIsMobile } from '@/src/hooks/useIsMobile';
-import { MessageSquare, Loader2 } from 'lucide-react';
+import { MessageSquare, Loader2, ArrowRight } from 'lucide-react';
 import {
   intellideskConfigured,
   intellideskTenantId,
@@ -1084,7 +1084,7 @@ function cloneMockMessages(): Record<string, Message[]> {
   return copy;
 }
 
-export default function MailboxPage() {
+export default function H5MailboxPage() {
   const { ticketId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -1736,11 +1736,11 @@ export default function MailboxPage() {
     user?.email,
   ]);
 
-  const showList = !isMobile || !ticketId;
-  const showDetail = !isMobile || !!ticketId;
+  const showList = !ticketId;
+  const showDetail = !!ticketId;
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden relative">
       {live && !listLoading && !apiError && tickets.length === 0 && showList ? (
         <div className="shrink-0 px-4 py-3 bg-amber-50 border-b border-amber-200 text-sm text-amber-950">
           <p className="font-semibold">当前没有可显示的工单</p>
@@ -1795,7 +1795,8 @@ export default function MailboxPage() {
             mailboxSearchSuffix={mailboxSearchSuffix}
             onInboxSynced={() => setListReloadNonce((n) => n + 1)}
             onTicketHover={live ? prefetchTicketDetail : undefined}
-            className={isMobile ? "w-full border-none" : "w-[320px]"}
+            className="w-full border-none"
+            ticketDetailPathPrefix="/ticket"
             {...(live
               ? {
                   listSearchQuery: inboxListSearchInput,
@@ -1809,7 +1810,7 @@ export default function MailboxPage() {
         )}
 
         {showDetail && (
-          <div className="relative min-h-0 flex-1 overflow-hidden">
+          <div className="absolute inset-0 z-20 flex h-full flex-col overflow-hidden bg-white">
             {live && listLoading && !ticketId ? (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 text-sm text-slate-500">
                 加载中…
@@ -1822,61 +1823,70 @@ export default function MailboxPage() {
               </div>
             ) : null}
             {selectedTicket ? (
-              <TicketDetail
-                ticket={selectedTicket}
-                messages={messagesByTicket[selectedTicket.id] || []}
-                order={
-                  selectedTicket.orderId ? ordersForList[selectedTicket.orderId] : undefined
-                }
-                customer={customersForList[selectedTicket.customerId]}
-                onSendMessage={handleSendMessage}
-                onUpdateInternalNote={handleUpdateInternalNote}
-                onDeleteInternalNote={handleDeleteInternalNote}
-                seatOptions={seatOptions}
-                assignedSeatId={
-                  seatAssignmentByTicket[selectedTicket.id] ??
-                  selectedTicket.assignedSeatId ??
-                  null
-                }
-                onAssignSeat={(seatId) => {
-                  if (live) {
-                    handleUpdateTicket({ assignedSeatId: seatId ?? undefined });
-                    return;
-                  }
-                  setSeatAssignmentByTicket((prev) => {
-                    const next = { ...prev };
-                    if (!seatId) delete next[selectedTicket.id];
-                    else next[selectedTicket.id] = seatId;
-                    return next;
-                  });
-                }}
-                onUpdateTicket={handleUpdateTicket}
-                conversationLoading={live && detailLoading}
-                conversationError={live ? detailError : null}
-                conversationMessagesTotal={live ? detailMessagesTotal : null}
-                onLoadOlderMessages={live && ticketId ? loadOlderTicketMessages : undefined}
-                olderMessagesLoading={live ? olderMessagesLoading : false}
-                onReloadConversation={live && ticketId ? reloadConversation : undefined}
-                agentSeatDisplayName={agentSeatDisplayName}
-              />
+              <>
+                <div className="border-b border-slate-200 bg-white px-3 py-2 flex items-center justify-between shrink-0">
+                  <button 
+                    onClick={() => navigate('/')}
+                    className="p-1 -ml-1 text-slate-500 hover:bg-slate-100 rounded-md"
+                  >
+                    <ArrowRight className="w-5 h-5 rotate-180" />
+                  </button>
+                  <h2 className="font-bold text-slate-900 text-sm truncate px-2">工单详情</h2>
+                  <div className="w-7"></div>
+                </div>
+                <div className="flex-1 min-h-0 relative">
+                  <H5TicketDetail
+                    ticket={selectedTicket}
+                    messages={messagesByTicket[selectedTicket.id] || []}
+                    order={
+                      selectedTicket.orderId ? ordersForList[selectedTicket.orderId] : undefined
+                    }
+                    customer={customersForList[selectedTicket.customerId]}
+                    onSendMessage={handleSendMessage}
+                    onUpdateInternalNote={handleUpdateInternalNote}
+                    onDeleteInternalNote={handleDeleteInternalNote}
+                    seatOptions={seatOptions}
+                    assignedSeatId={
+                      seatAssignmentByTicket[selectedTicket.id] ??
+                      selectedTicket.assignedSeatId ??
+                      null
+                    }
+                    onAssignSeat={(seatId) => {
+                      if (live) {
+                        handleUpdateTicket({ assignedSeatId: seatId ?? undefined });
+                        return;
+                      }
+                      setSeatAssignmentByTicket((prev) => {
+                        const next = { ...prev };
+                        if (!seatId) delete next[selectedTicket.id];
+                        else next[selectedTicket.id] = seatId;
+                        return next;
+                      });
+                    }}
+                    onUpdateTicket={handleUpdateTicket}
+                    conversationLoading={live && detailLoading}
+                    conversationError={live ? detailError : null}
+                    conversationMessagesTotal={live ? detailMessagesTotal : null}
+                    onLoadOlderMessages={live && ticketId ? loadOlderTicketMessages : undefined}
+                    olderMessagesLoading={live ? olderMessagesLoading : false}
+                    onReloadConversation={live && ticketId ? reloadConversation : undefined}
+                    agentSeatDisplayName={agentSeatDisplayName}
+                  />
+                </div>
+              </>
             ) : (
-              !isMobile && (
-                <div className="flex flex-col items-center justify-center h-full text-slate-400 px-4 text-center">
+                <div className="flex flex-col items-center justify-center h-full flex-1 text-slate-400 px-4 text-center">
                   <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
                     <MessageSquare className="w-8 h-8" />
                   </div>
                   <p className="text-sm font-medium">
                     {live && ticketId && !listLoading && !detailLoading && tickets.length > 0
-                      ? '未在列表中找到该工单（可能超出当前列表条数），请从左侧列表进入或确认工单 ID'
+                      ? '未在列表中找到该工单'
                       : live && !listLoading && tickets.length === 0
-                        ? '暂无工单（请确认已 seed 数据库）'
-                        : '请选择一个工单查看详情'}
+                        ? '暂无工单'
+                        : '加载中…'}
                   </p>
-                  {live && ticketId && detailError ? (
-                    <p className="mt-3 text-xs text-red-600 max-w-md">{detailError}</p>
-                  ) : null}
                 </div>
-              )
             )}
           </div>
         )}

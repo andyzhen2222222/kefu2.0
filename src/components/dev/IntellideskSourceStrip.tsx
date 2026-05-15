@@ -5,7 +5,7 @@ import {
   getGlobalApiError,
   setGlobalApiError,
 } from '@/src/services/intellideskApi';
-import { AlertCircle, RotateCw } from 'lucide-react';
+import { AlertCircle, RotateCw, X } from 'lucide-react';
 
 /**
  * 开发态提示当前是「内置演示数据」还是「自建后端」，避免误用 npm run dev却以为在联调。
@@ -25,27 +25,43 @@ export default function IntellideskSourceStrip() {
   if (globalError) {
     return (
       <div
-        className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-1.5 text-center text-xs text-red-900"
+        className="shrink-0 border-b border-red-200 bg-red-50 px-3 py-1.5 text-red-900 sm:px-4"
         role="alert"
       >
-        <div className="flex items-center justify-center gap-2 flex-wrap">
-          <AlertCircle className="w-3.5 h-3.5 text-red-600 shrink-0" />
-          <span className="font-bold shrink-0">提示：</span>
-          <span className="text-left max-w-3xl" title={globalError}>
-            {globalError}
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              setGlobalApiError(null);
-              handleRetry();
-            }}
-            className="ml-1 p-1 hover:bg-red-100 rounded-md transition-colors flex items-center gap-1 font-bold text-red-700"
-            title="清除提示并刷新"
-          >
-            <RotateCw className="w-3 h-3" />
-            重试
-          </button>
+        <div className="mx-auto flex max-w-5xl items-start gap-2">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-bold sm:text-xs">提示</p>
+            <div
+              className="mt-0.5 max-h-[3.5rem] overflow-y-auto rounded-md border border-red-100/90 bg-white/70 px-2 py-1 font-mono text-[10px] leading-snug text-red-900 [overflow-wrap:anywhere] sm:max-h-[4.5rem] sm:text-[11px]"
+              title={globalError}
+            >
+              {globalError}
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-col gap-0.5 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              onClick={() => setGlobalApiError(null)}
+              className="rounded-md p-1.5 text-red-700 transition-colors hover:bg-red-100"
+              title="关闭提示"
+              aria-label="关闭提示"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setGlobalApiError(null);
+                handleRetry();
+              }}
+              className="flex items-center gap-1 rounded-md p-1.5 text-xs font-bold text-red-700 transition-colors hover:bg-red-100"
+              title="清除提示并刷新页面"
+            >
+              <RotateCw className="h-3 w-3 shrink-0" />
+              <span className="hidden sm:inline">重试</span>
+            </button>
+          </div>
         </div>
       </div>
     );
