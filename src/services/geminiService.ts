@@ -294,12 +294,13 @@ export async function generateReplyPolish(
   messages: Message[],
   order?: Order,
   authUserId?: string | null,
-  polish?: { tone?: AiPolishTone; style?: AiPolishStyle }
+  polish?: { tone?: AiPolishTone; style?: AiPolishStyle; promptBlock?: string }
 ): Promise<string | null> {
   if (!currentText.trim()) return null;
 
   const tone = polish?.tone ?? 'auto';
   const style = polish?.style ?? 'auto';
+  const promptBlock = polish?.promptBlock?.trim();
 
   if (intellideskConfigured()) {
     try {
@@ -308,6 +309,7 @@ export async function generateReplyPolish(
       const { polished } = await postAiPolish(tenantId, userId, ticket.id, currentText, {
         tone,
         style,
+        ...(promptBlock ? { promptBlock } : {}),
       });
       return polished?.trim() || null;
     } catch (error) {
@@ -315,7 +317,7 @@ export async function generateReplyPolish(
     }
   }
 
-  const extraZh = `${frontendPolishToneBlock(tone)}\n\n${frontendPolishStyleBlock(style)}`;
+  const extraZh = promptBlock || `${frontendPolishToneBlock(tone)}\n\n${frontendPolishStyleBlock(style)}`;
 
   const prompt = `
       You are a professional customer service assistant. Polish and rewrite the following draft while preserving meaning. Follow the tone and style requirements given in Chinese below exactly.

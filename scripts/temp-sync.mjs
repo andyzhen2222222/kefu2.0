@@ -7,11 +7,11 @@ async function sync() {
   };
   
   console.log('--- 开始同步 ---');
-  console.log('目标: http://localhost:4000/api/sync/mother-system');
+  console.log('目标: http://localhost:4001/api/sync/mother-system');
   console.log('配置:', JSON.stringify(payload, null, 2));
 
   try {
-    const res = await fetch('http://localhost:4000/api/sync/mother-system', {
+    const res = await fetch('http://localhost:4001/api/sync/mother-system', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

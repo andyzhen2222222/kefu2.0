@@ -2,6 +2,15 @@ import { useState, useEffect, useMemo } from 'react';
 import { X, Search, Plus, Upload, Calendar, AlertCircle, Package, Sparkles, Loader2 } from 'lucide-react';
 import { cn, openFieldConfigPage } from '@/src/lib/utils';
 import { useIsMobile } from '@/src/hooks/useIsMobile';
+import {
+  H5_FORM_CONTROL,
+  H5_MODAL_BTN_GHOST,
+  H5_MODAL_HEADER,
+  H5_SAFE_BOTTOM,
+  H5_TAB_BOTTOM_BAR,
+  H5_TAB_BTN_ACCENT,
+  H5_TAB_BTN_SECONDARY,
+} from '@/src/h5/h5UiSpec';
 import { RETURN_CARRIER_DICT_ID, RETURN_CARRIER_SEED_ITEMS } from '@/src/lib/afterSalesFieldOptions';
 import { Order, AfterSalesType, type AfterSalesRecord } from '@/src/types';
 import { recognizeAfterSalesFromFeedback } from '@/src/services/geminiService';
@@ -53,6 +62,8 @@ export default function SubmitAfterSalesModal({
   apiSubmit,
 }: SubmitAfterSalesModalProps) {
   const isMobile = useIsMobile();
+  const isH5App = import.meta.env.VITE_APP_TYPE === 'h5';
+  const [pcManageHint, setPcManageHint] = useState<string | null>(null);
   // If initialData exists, we initialize state with it (simulating an edit mode)
   const [searchOrderQuery, setSearchOrderQuery] = useState('');
   const [searchedOrder, setSearchedOrder] = useState<Order | null>(null);
@@ -84,9 +95,18 @@ export default function SubmitAfterSalesModal({
     return active;
   }, [returnCarrier]);
 
+  const handleOpenFieldManage = (dictId: string, fieldLabel: string) => {
+    if (isH5App || isMobile) {
+      setPcManageHint(`请在 PC 端打开「设置 → 字段管理」维护${fieldLabel}。`);
+      return;
+    }
+    openFieldConfigPage(dictId);
+  };
+
   useEffect(() => {
     if (!isOpen) return;
     setApiError(null);
+    setPcManageHint(null);
     if (initialData) {
       setType(initialData.type);
       setHandlingMethod(initialData.handlingMethod || '待确认');
@@ -184,21 +204,196 @@ export default function SubmitAfterSalesModal({
     });
   };
 
+  const submitAccentClass =
+    type === AfterSalesType.REFUND && refundExecutionType === 'api'
+      ? '!bg-green-600 hover:!bg-green-700'
+      : '';
+
+  const submitLabel = initialData
+    ? '保存修改'
+    : type === AfterSalesType.REFUND && refundExecutionType === 'api' && refundAmount
+      ? isMobile
+        ? '提交并原路退回'
+        : `提交并原路退回 (${currentOrder?.currency || 'USD'} ${refundAmount})`
+      : '提交售后';
+
+  const handleSubmit = async () => {
+    setApiError(null);
+    if (apiSubmit && !initialData?.id) {
+      if (!currentOrder?.id) {
+        setApiError('请先搜索并匹配订单');
+        return;
+      }
+      if (
+        type === AfterSalesType.REFUND &&
+        typeof refundAmount === 'number' &&
+        currentOrder.amount &&
+        refundAmount > currentOrder.amount
+      ) {
+        setApiError('退款金额不可超过订单最大可退金额');
+        return;
+      }
+      if (
+        (type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE) &&
+        (!returnTrackingNumber.trim() || !returnCarrier.trim())
+      ) {
+        setApiError('请填写退回物流单号并选择退回承运商');
+        return;
+      }
+      setSubmitting(true);
+      try {
+        await createAfterSalesRecord(apiSubmit.tenantId, apiSubmit.userId, {
+          orderId: currentOrder.id,
+          ...(apiSubmit.defaultTicketId ? { ticketId: apiSubmit.defaultTicketId } : {}),
+          type,
+          handlingMethod,
+          priority: priority as 'low' | 'medium' | 'high',
+          problemType,
+          buyerFeedback: buyerFeedback.trim(),
+          refundAmount:
+            refundAmount === '' || refundAmount === undefined ? undefined : Number(refundAmount),
+          refundExecutionType,
+          ...(type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE
+            ? {
+                returnTrackingNumber: returnTrackingNumber.trim(),
+                returnCarrier: returnCarrier.trim(),
+              }
+            : {}),
+        });
+        await apiSubmit.onSuccess();
+        onClose();
+      } catch (e) {
+        setApiError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+    if (apiSubmit && initialData?.id) {
+      if (
+        type === AfterSalesType.REFUND &&
+        typeof refundAmount === 'number' &&
+        currentOrder?.amount &&
+        refundAmount > currentOrder.amount
+      ) {
+        setApiError('退款金额不可超过订单最大可退金额');
+        return;
+      }
+      if (
+        (type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE) &&
+        (!returnTrackingNumber.trim() || !returnCarrier.trim())
+      ) {
+        setApiError('请填写退回物流单号并选择退回承运商');
+        return;
+      }
+      setSubmitting(true);
+      try {
+        await patchAfterSalesRecord(apiSubmit.tenantId, apiSubmit.userId, initialData.id, {
+          handlingMethod,
+          priority: priority as 'low' | 'medium' | 'high',
+          problemType,
+          buyerFeedback: buyerFeedback.trim(),
+          refundAmount:
+            refundAmount === '' || refundAmount === undefined ? undefined : Number(refundAmount),
+          ...(type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE
+            ? {
+                returnTrackingNumber: returnTrackingNumber.trim(),
+                returnCarrier: returnCarrier.trim(),
+              }
+            : {}),
+        });
+        await apiSubmit.onSuccess();
+        onClose();
+      } catch (e) {
+        setApiError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+    onSubmit({
+      orderId: currentOrder?.id,
+      ticketId: apiSubmit?.defaultTicketId,
+      type,
+      handlingMethod,
+      priority,
+      problemType,
+      buyerFeedback,
+      refundAmount,
+      refundExecutionType,
+      afterSalesCategory,
+      ...(type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE
+        ? {
+            returnTrackingNumber: returnTrackingNumber.trim(),
+            returnCarrier: returnCarrier.trim(),
+          }
+        : {}),
+    });
+    onClose();
+  };
+
+  const fieldClass = (extra?: string) =>
+    cn(
+      isMobile
+        ? H5_FORM_CONTROL
+        : 'w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-[#F97316] focus:outline-none focus:ring-2 focus:ring-[#F97316]/20',
+      extra
+    );
+
+  const fieldClassWhite = (extra?: string) => fieldClass(cn('bg-white', extra));
+
+  /** 移动端不用 grid+col-span，避免隐式多列导致字段挤在一行 */
+  const formFieldsLayout = isMobile ? 'flex w-full min-w-0 flex-col gap-6' : 'grid gap-6 grid-cols-2';
+
+  const formFieldWrap = 'w-full min-w-0 space-y-1.5';
+
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className={cn(
-        "bg-white shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200",
-        isMobile ? "w-full h-full rounded-none" : "w-full max-w-4xl rounded-2xl max-h-[90vh]"
-      )}>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 p-0 backdrop-blur-sm animate-in fade-in duration-200 sm:p-4">
+      <div
+        className={cn(
+          'flex flex-col overflow-hidden bg-white shadow-2xl animate-in zoom-in-95 duration-200',
+          isMobile ? 'h-full w-full rounded-none' : 'max-h-[90vh] w-full max-w-4xl rounded-2xl'
+        )}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <h2 className="text-lg font-bold text-slate-900">{initialData ? '修改售后工单' : '提交售后'}</h2>
-          <button onClick={onClose} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
-            <X className="w-5 h-5" />
+        <div className={cn(H5_MODAL_HEADER, isMobile ? 'px-3 py-3' : 'px-6 py-4')}>
+          <h2 className={cn('font-bold text-slate-900', isMobile ? 'text-sm' : 'text-lg')}>
+            {initialData ? '修改售后工单' : '提交售后'}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭"
+            className={cn(
+              'rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600',
+              isMobile ? 'p-1.5' : 'p-2'
+            )}
+          >
+            <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-8">
+        <div
+          className={cn(
+            'min-h-0 flex-1 overflow-y-auto',
+            isMobile ? 'space-y-6 p-4' : 'space-y-8 p-6'
+          )}
+        >
+          {pcManageHint ? (
+            <div
+              role="status"
+              className="flex items-start justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-950"
+            >
+              <span className="min-w-0 flex-1 leading-relaxed">{pcManageHint}</span>
+              <button
+                type="button"
+                onClick={() => setPcManageHint(null)}
+                className="shrink-0 text-xs font-medium text-amber-800 underline-offset-2 hover:underline"
+              >
+                知道了
+              </button>
+            </div>
+          ) : null}
           {apiError ? (
             <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-800">
               {apiError}
@@ -211,26 +406,30 @@ export default function SubmitAfterSalesModal({
                 <div className="w-1 h-4 bg-[#F97316] rounded-full" />
                 关联订单
               </h3>
-              <div className="grid grid-cols-2 gap-6">
-                <div className="space-y-1.5 col-span-2 md:col-span-1">
+              <div className={cn('grid gap-6', isMobile ? 'grid-cols-1' : 'grid-cols-2')}>
+                <div className="col-span-full space-y-1.5 md:col-span-1">
                   <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
                     <span className="text-red-500">*</span> 平台订单号:
                   </label>
-                  <div className="relative flex gap-2">
+                  <div className={cn('flex gap-2', isMobile && 'flex-col')}>
                     <div className="relative flex-1">
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         value={searchOrderQuery}
                         onChange={(e) => setSearchOrderQuery(e.target.value)}
                         placeholder="请输入订单号进行搜索"
-                        className="w-full pl-3 pr-10 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+                        className={cn(fieldClass(), 'pr-10')}
                       />
-                      <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                      <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                     </div>
-                    <button 
-                      type="button" 
-                      onClick={handleSearchOrder}
-                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded-lg transition-colors"
+                    <button
+                      type="button"
+                      onClick={() => void handleSearchOrder()}
+                      className={cn(
+                        isMobile
+                          ? H5_TAB_BTN_SECONDARY
+                          : 'rounded-lg bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-200'
+                      )}
                     >
                       搜索带入
                     </button>
@@ -285,11 +484,13 @@ export default function SubmitAfterSalesModal({
               <div className="w-1 h-4 bg-[#F97316] rounded-full" />
               售后信息
             </h3>
-            <div className={cn(
-              "grid gap-6",
-              isMobile ? "grid-cols-1" : "grid-cols-3"
-            )}>
-              <div className="space-y-1.5">
+            <div
+              className={cn(
+                'gap-6',
+                isMobile ? 'flex w-full min-w-0 flex-col' : 'grid grid-cols-3'
+              )}
+            >
+              <div className={formFieldWrap}>
                 <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
                   <span className="text-red-500">*</span> 处理方式:
                 </label>
@@ -297,7 +498,7 @@ export default function SubmitAfterSalesModal({
                   value={type}
                   onChange={(e) => setType(e.target.value as AfterSalesType)}
                   title="处理方式"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+                  className={fieldClass()}
                 >
                   <option value={AfterSalesType.REFUND}>退款 (Refund)</option>
                   <option value={AfterSalesType.RETURN}>退货 (Return)</option>
@@ -305,7 +506,7 @@ export default function SubmitAfterSalesModal({
                   <option value={AfterSalesType.REISSUE}>重发 (Reissue)</option>
                 </select>
               </div>
-              <div className="space-y-1.5">
+              <div className={formFieldWrap}>
                 <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
                   <span className="text-red-500">*</span> 优先级:
                 </label>
@@ -313,19 +514,19 @@ export default function SubmitAfterSalesModal({
                   value={priority}
                   onChange={(e) => setPriority(e.target.value as AfterSalesPriority)}
                   title="优先级"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+                  className={fieldClass()}
                 >
                   <option value="low">低</option>
                   <option value="medium">中</option>
                   <option value="high">高</option>
                 </select>
               </div>
-              <div className="space-y-1.5">
+              <div className={formFieldWrap}>
                 <label className="text-xs font-medium text-slate-500">售后状态:</label>
                 <select 
                   disabled 
                   title="售后状态"
-                  className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-sm text-slate-500"
+                  className={fieldClass('bg-slate-100 text-slate-500')}
                 >
                   <option>已提交</option>
                 </select>
@@ -335,75 +536,76 @@ export default function SubmitAfterSalesModal({
             {/* Dynamic Fields based on Type */}
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-4">
               {type === AfterSalesType.REFUND && (
-                <div className={cn(
-                  "grid gap-6",
-                  isMobile ? "grid-cols-1" : "grid-cols-2"
-                )}>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-slate-500 flex items-center justify-between gap-1">
-                      <span className="flex items-center gap-1">
-                        <span className="text-red-500">*</span> 退款金额 ({currentOrder?.currency || 'USD'}):
+                <div className={formFieldsLayout}>
+                  <div className={formFieldWrap}>
+                    <label className="flex items-center justify-between gap-2 text-xs font-medium text-slate-500">
+                      <span className="flex min-w-0 items-center gap-1">
+                        <span className="text-red-500">*</span>
+                        <span className="truncate">退款金额 ({currentOrder?.currency || 'USD'})</span>
                       </span>
-                      {currentOrder?.amount && (
+                      {currentOrder?.amount ? (
                         <button
                           type="button"
                           onClick={() => setRefundAmount(currentOrder.amount)}
-                          className="text-[10px] text-[#F97316] font-bold hover:underline"
+                          className="shrink-0 text-[10px] font-bold text-[#F97316] hover:underline"
                         >
                           全额退款
                         </button>
-                      )}
+                      ) : null}
                     </label>
                     <div className="relative flex flex-col gap-1">
-                      <input 
-                        type="number" 
+                      <input
+                        type="number"
                         value={refundAmount}
                         onChange={(e) => {
                           const val = e.target.value;
                           const num = Number(val);
-                          // We allow typing anything but show an error if it's over the limit
                           setRefundAmount(val === '' ? '' : num);
                         }}
                         max={currentOrder?.amount}
                         placeholder={`最大可退: ${currentOrder?.amount || 0}`}
-                        className={cn(
-                          "w-full px-3 py-2 bg-white border rounded-lg text-sm focus:outline-none focus:ring-2",
-                          typeof refundAmount === 'number' && currentOrder?.amount && refundAmount > currentOrder.amount
-                            ? "border-red-400 focus:border-red-500 focus:ring-red-500/20 text-red-600 bg-red-50/50"
-                            : "border-slate-200 focus:border-[#F97316] focus:ring-[#F97316]/20"
-                        )} 
+                        className={fieldClassWhite(
+                          typeof refundAmount === 'number' &&
+                            currentOrder?.amount &&
+                            refundAmount > currentOrder.amount
+                            ? 'border-red-400 bg-red-50/50 text-red-600 focus:border-red-500 focus:ring-red-500/20'
+                            : undefined
+                        )}
                       />
-                      {typeof refundAmount === 'number' && currentOrder?.amount && refundAmount > currentOrder.amount && (
-                        <p className="text-[10px] font-bold text-red-500 flex items-center gap-1 absolute -bottom-5 left-1">
-                          <AlertCircle className="w-3 h-3" />
-                          金额不可超过订单实际支付最大可退金额
-                        </p>
-                      )}
+                      {typeof refundAmount === 'number' &&
+                        currentOrder?.amount &&
+                        refundAmount > currentOrder.amount && (
+                          <p className="flex items-center gap-1 text-[10px] font-bold text-red-500">
+                            <AlertCircle className="h-3 w-3 shrink-0" />
+                            金额不可超过订单实际支付最大可退金额
+                          </p>
+                        )}
                     </div>
                   </div>
-            <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-500 flex items-center justify-between">
-                  <span className="flex items-center gap-1">
-                    <span className="text-red-500">*</span> 售后类型:
-                  </span>
-                  <button 
-                    type="button"
-                    onClick={() => openFieldConfigPage('after_sales_type')}
-                    className="text-[10px] text-[#F97316] font-medium hover:underline"
-                  >
-                    管理售后类型
-                  </button>
-                </label>
-              <select
-                value={afterSalesCategory}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setAfterSalesCategory(v);
-                  setProblemType(v ? AFTER_SALES_CATEGORY_LABELS[v] || v : '');
-                }}
-                title="售后类型"
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
-              >
+
+                  <div className={formFieldWrap}>
+                    <label className="flex items-center justify-between gap-2 text-xs font-medium text-slate-500">
+                      <span className="flex items-center gap-1">
+                        <span className="text-red-500">*</span> 售后类型
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenFieldManage('after_sales_type', '售后类型')}
+                        className="shrink-0 text-[10px] font-medium text-[#F97316] hover:underline"
+                      >
+                        管理售后类型
+                      </button>
+                    </label>
+                    <select
+                      value={afterSalesCategory}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setAfterSalesCategory(v);
+                        setProblemType(v ? AFTER_SALES_CATEGORY_LABELS[v] || v : '');
+                      }}
+                      title="售后类型"
+                      className={fieldClassWhite()}
+                    >
                 <option value="">请选择售后类型</option>
                 <option value="logistics">物流问题</option>
                 <option value="quality">质量问题</option>
@@ -415,7 +617,12 @@ export default function SubmitAfterSalesModal({
             </div>
 
                   {/* 退款执行方式选择 */}
-                  <div className="col-span-2 space-y-2 mt-2 border-t border-slate-100 pt-4">
+                  <div
+                    className={cn(
+                      'w-full min-w-0 space-y-2 border-t border-slate-100 pt-4',
+                      !isMobile && 'col-span-2'
+                    )}
+                  >
                     <label className="text-xs font-bold text-slate-700">退款执行方式</label>
                     <div className={cn(
                       "grid gap-4",
@@ -472,11 +679,8 @@ export default function SubmitAfterSalesModal({
               )}
 
               {(type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE) && (
-                <div className={cn(
-                  "grid gap-6",
-                  isMobile ? "grid-cols-1" : "grid-cols-2"
-                )}>
-                  <div className="space-y-1.5">
+                <div className={formFieldsLayout}>
+                  <div className={formFieldWrap}>
                     <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
                       <span className="text-red-500">*</span> 退回物流单号:
                     </label>
@@ -485,17 +689,17 @@ export default function SubmitAfterSalesModal({
                       value={returnTrackingNumber}
                       onChange={(e) => setReturnTrackingNumber(e.target.value)}
                       placeholder="请输入买家退回的物流单号"
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+                      className={fieldClassWhite()}
                     />
                   </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-slate-500 flex items-center justify-between">
+                  <div className={formFieldWrap}>
+                    <label className="flex items-center justify-between gap-2 text-xs font-medium text-slate-500">
                       <span className="flex items-center gap-1">
-                        <span className="text-red-500">*</span> 退回承运商:
+                        <span className="text-red-500">*</span> 退回承运商
                       </span>
                       <button
                         type="button"
-                        onClick={() => openFieldConfigPage(RETURN_CARRIER_DICT_ID)}
+                        onClick={() => handleOpenFieldManage(RETURN_CARRIER_DICT_ID, '承运商')}
                         className="text-[10px] text-[#F97316] font-medium hover:underline"
                       >
                         管理承运商
@@ -505,7 +709,7 @@ export default function SubmitAfterSalesModal({
                       value={returnCarrier}
                       onChange={(e) => setReturnCarrier(e.target.value)}
                       title="退回承运商"
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+                      className={fieldClassWhite()}
                     >
                       <option value="">请选择承运商</option>
                       {carrierSelectOptions.map((c) => (
@@ -519,78 +723,70 @@ export default function SubmitAfterSalesModal({
               )}
 
               {(type === AfterSalesType.REISSUE || type === AfterSalesType.EXCHANGE) && (
-                <div className={cn(
-                  "grid gap-6",
-                  isMobile ? "grid-cols-1" : "grid-cols-2"
-                )}>
-                  <div className="space-y-1.5">
+                <div className={formFieldsLayout}>
+                  <div className={formFieldWrap}>
                     <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
-                      <span className="text-red-500">*</span> 重发SKU:
+                      <span className="text-red-500">*</span> 重发SKU
                     </label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       placeholder="请输入要重发的SKU"
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]" 
+                      className={fieldClassWhite()}
                     />
                   </div>
-                  <div className="space-y-1.5">
+                  <div className={formFieldWrap}>
                     <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
-                      <span className="text-red-500">*</span> 重发数量:
+                      <span className="text-red-500">*</span> 重发数量
                     </label>
-                    <input 
-                      type="number" 
+                    <input
+                      type="number"
                       min="1"
                       defaultValue="1"
-                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]" 
+                      className={fieldClassWhite()}
                     />
                   </div>
                 </div>
               )}
             </div>
 
-            <div className={cn(
-              "grid gap-6",
-              isMobile ? "grid-cols-1" : "grid-cols-3"
-            )}>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-500 flex items-center justify-between">
+            <div
+              className={cn(
+                'gap-6',
+                isMobile ? 'flex w-full min-w-0 flex-col' : 'grid grid-cols-3'
+              )}
+            >
+              <div className={formFieldWrap}>
+                <label className="flex items-center justify-between gap-2 text-xs font-medium text-slate-500">
                   <span className="flex items-center gap-1">
-                    <span className="text-red-500">*</span> 签收方:
+                    <span className="text-red-500">*</span> 签收方
                   </span>
                   <button 
                     type="button"
-                    onClick={() => openFieldConfigPage('receiver')}
+                    onClick={() => handleOpenFieldManage('receiver', '签收方')}
                     className="text-[10px] text-[#F97316] font-medium hover:underline"
                   >
                     管理签收方
                   </button>
                 </label>
-                <select 
-                  title="签收方"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm"
-                >
+                <select title="签收方" className={fieldClass()}>
                   <option value="">选择退件仓</option>
                   <option value="us_east">美东 1 号仓 (NJ)</option>
                   <option value="us_west">美西退件仓 (CA)</option>
                   <option value="eu_uk">英国伦敦转运仓</option>
                 </select>
               </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
-                  客户签收时间:
-                </label>
+              <div className={formFieldWrap}>
+                <label className="text-xs font-medium text-slate-500">客户签收时间</label>
                 <div className="relative">
-                  <input type="date" className="w-full pl-3 pr-10 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
+                  <input type="date" className={cn(fieldClass(), 'pr-10')} />
                   <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                 </div>
               </div>
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
-                  客户反馈时间:
-                </label>
+              <div className={formFieldWrap}>
+                <label className="text-xs font-medium text-slate-500">客户反馈时间</label>
                 <div className="relative">
-                  <input type="date" className="w-full pl-3 pr-10 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm" />
-                  <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  <input type="date" className={cn(fieldClass(), 'pr-10')} />
+                  <Calendar className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 </div>
               </div>
             </div>
@@ -599,34 +795,33 @@ export default function SubmitAfterSalesModal({
               <label className="text-xs font-medium text-slate-500 flex items-center gap-1">
                 买家反馈:
               </label>
-              <div className="flex gap-2">
-                <textarea 
+              <div className={cn('flex gap-2', isMobile && 'flex-col')}>
+                <textarea
                   value={buyerFeedback}
                   onChange={(e) => setBuyerFeedback(e.target.value)}
-                  className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm min-h-[80px] focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
+                  className={cn(fieldClass(), 'min-h-[88px] resize-none')}
                   placeholder="请输入买家反馈内容..."
                 />
-                <div className="flex flex-col gap-2 shrink-0 self-start mt-1">
-                  <button
-                    type="button"
-                    disabled={isRecognizing || !buyerFeedback.trim()}
-                    onClick={handleAIRecognize}
-                    className={cn(
-                      "inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-colors border",
-                      isRecognizing || !buyerFeedback.trim()
-                        ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed"
-                        : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-                    )}
-                    title="根据当前反馈自动填充售后类型、优先级、处理方式等"
-                  >
-                    {isRecognizing ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      <Sparkles className="w-3.5 h-3.5" />
-                    )}
-                    AI 自动识别
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  disabled={isRecognizing || !buyerFeedback.trim()}
+                  onClick={() => void handleAIRecognize()}
+                  className={cn(
+                    'inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border text-xs font-bold transition-colors',
+                    isMobile ? 'min-h-11 w-full touch-manipulation' : 'self-start px-3 py-2',
+                    isRecognizing || !buyerFeedback.trim()
+                      ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                      : 'border-indigo-200 bg-indigo-50 text-indigo-700 active:bg-indigo-100'
+                  )}
+                  title="根据当前反馈自动填充售后类型、优先级、处理方式等"
+                >
+                  {isRecognizing ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  )}
+                  AI 自动识别
+                </button>
               </div>
             </div>
 
@@ -643,151 +838,53 @@ export default function SubmitAfterSalesModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 bg-slate-50 border-t border-slate-100">
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={onClose}
-            className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-200 rounded-xl transition-colors"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={async () => {
-              setApiError(null);
-              if (apiSubmit && !initialData?.id) {
-                if (!currentOrder?.id) {
-                  setApiError('请先搜索并匹配订单');
-                  return;
-                }
-                if (type === AfterSalesType.REFUND && typeof refundAmount === 'number' && currentOrder.amount && refundAmount > currentOrder.amount) {
-                  setApiError('退款金额不可超过订单最大可退金额');
-                  return;
-                }
-                if (
-                  (type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE) &&
-                  (!returnTrackingNumber.trim() || !returnCarrier.trim())
-                ) {
-                  setApiError('请填写退回物流单号并选择退回承运商');
-                  return;
-                }
-                setSubmitting(true);
-                try {
-                  await createAfterSalesRecord(apiSubmit.tenantId, apiSubmit.userId, {
-                    orderId: currentOrder.id,
-                    ...(apiSubmit.defaultTicketId
-                      ? { ticketId: apiSubmit.defaultTicketId }
-                      : {}),
-                    type,
-                    handlingMethod,
-                    priority: priority as 'low' | 'medium' | 'high',
-                    problemType,
-                    buyerFeedback: buyerFeedback.trim(),
-                    refundAmount:
-                      refundAmount === '' || refundAmount === undefined
-                        ? undefined
-                        : Number(refundAmount),
-                    refundExecutionType,
-                    ...(type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE
-                      ? {
-                          returnTrackingNumber: returnTrackingNumber.trim(),
-                          returnCarrier: returnCarrier.trim(),
-                        }
-                      : {}),
-                  });
-                  await apiSubmit.onSuccess();
-                  onClose();
-                } catch (e) {
-                  setApiError(e instanceof Error ? e.message : String(e));
-                } finally {
-                  setSubmitting(false);
-                }
-                return;
-              }
-              if (apiSubmit && initialData?.id) {
-                if (type === AfterSalesType.REFUND && typeof refundAmount === 'number' && currentOrder?.amount && refundAmount > currentOrder.amount) {
-                  setApiError('退款金额不可超过订单最大可退金额');
-                  return;
-                }
-                if (
-                  (type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE) &&
-                  (!returnTrackingNumber.trim() || !returnCarrier.trim())
-                ) {
-                  setApiError('请填写退回物流单号并选择退回承运商');
-                  return;
-                }
-                setSubmitting(true);
-                try {
-                  await patchAfterSalesRecord(
-                    apiSubmit.tenantId,
-                    apiSubmit.userId,
-                    initialData.id,
-                    {
-                      handlingMethod,
-                      priority: priority as 'low' | 'medium' | 'high',
-                      problemType,
-                      buyerFeedback: buyerFeedback.trim(),
-                      refundAmount:
-                        refundAmount === '' || refundAmount === undefined
-                          ? undefined
-                          : Number(refundAmount),
-                      ...(type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE
-                        ? {
-                            returnTrackingNumber: returnTrackingNumber.trim(),
-                            returnCarrier: returnCarrier.trim(),
-                          }
-                        : {}),
-                    }
-                  );
-                  await apiSubmit.onSuccess();
-                  onClose();
-                } catch (e) {
-                  setApiError(e instanceof Error ? e.message : String(e));
-                } finally {
-                  setSubmitting(false);
-                }
-                return;
-              }
-              onSubmit({
-                orderId: currentOrder?.id,
-                ticketId: apiSubmit?.defaultTicketId,
-                type,
-                handlingMethod,
-                priority,
-                problemType,
-                buyerFeedback,
-                refundAmount,
-                refundExecutionType,
-                afterSalesCategory,
-                ...(type === AfterSalesType.RETURN || type === AfterSalesType.EXCHANGE
-                  ? {
-                      returnTrackingNumber: returnTrackingNumber.trim(),
-                      returnCarrier: returnCarrier.trim(),
-                    }
-                  : {}),
-              });
-              onClose();
-            }}
-            className={cn(
-              'px-8 py-2.5 rounded-xl text-sm font-bold transition-colors shadow-sm text-white inline-flex items-center gap-2',
-              type === AfterSalesType.REFUND && refundExecutionType === 'api'
-                ? 'bg-green-600 hover:bg-green-700'
-                : 'bg-[#F97316] hover:bg-[#ea580c]',
-              submitting && 'opacity-70 pointer-events-none'
-            )}
-          >
-            {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            {initialData
-              ? '保存修改'
-              : type === AfterSalesType.REFUND &&
-                  refundExecutionType === 'api' &&
-                  refundAmount
-                ? `提交并原路退回 (${currentOrder?.currency || 'USD'} ${refundAmount})`
-                : '提交售后'}
-          </button>
-        </div>
+        {isMobile ? (
+          <div className={cn(H5_TAB_BOTTOM_BAR, H5_SAFE_BOTTOM, 'space-y-2 px-3 pt-2')}>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={onClose}
+              className={H5_MODAL_BTN_GHOST}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => void handleSubmit()}
+              className={cn(H5_TAB_BTN_ACCENT, submitAccentClass)}
+            >
+              {submitting ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" /> : null}
+              {submitLabel}
+            </button>
+          </div>
+        ) : (
+          <div className="flex shrink-0 items-center justify-end gap-3 border-t border-slate-100 bg-slate-50 px-6 py-4">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={onClose}
+              className="rounded-xl px-5 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-200"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => void handleSubmit()}
+              className={cn(
+                'inline-flex items-center gap-2 rounded-xl px-8 py-2.5 text-sm font-bold text-white shadow-sm transition-colors',
+                type === AfterSalesType.REFUND && refundExecutionType === 'api'
+                  ? 'bg-green-600 hover:bg-green-700'
+                  : 'bg-[#F97316] hover:bg-[#ea580c]',
+                submitting && 'pointer-events-none opacity-70'
+              )}
+            >
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {submitLabel}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

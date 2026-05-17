@@ -29,22 +29,22 @@ export default defineConfig(({mode}) => {
         process.env.CI === 'true'
           ? false
           : mode === 'api'
-            ? 'http://127.0.0.1:4001/'
+            ? 'http://127.0.0.1:4000/'
             : mode === 'h5'
               ? 'http://127.0.0.1:4002/'
               : 'http://127.0.0.1:5173/',
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify: file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
-      // 正式联调：Vite 占 4001，后端默认 4000，同源转发 /api 与 /ws（见 .env.api）
+      // PC 联调：Vite 占 4000；后端默认 4001，同源转发 /api 与 /ws（见 .env.api）
       ...((mode === 'api' || mode === 'h5')
         ? (() => {
             const apiProxyTarget =
-              (env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:4000').replace(/\/$/, '');
+              (env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:4001').replace(/\/$/, '');
             return {
-              /** 禁止端口被占用时自动改占 4000，否则会与后端冲突并出现「服务内部错误」 */
+              /** strictPort：避免 Vite 在端口被占用时悄悄换端口，与 .env.api 地址不一致 */
               strictPort: true,
-              port: mode === 'h5' ? 4002 : 4001,
+              port: mode === 'h5' ? 4002 : 4000,
               proxy: {
                 '/api': {
                   target: apiProxyTarget,

@@ -1521,7 +1521,7 @@ export default function H5MailboxPage() {
         if (!isMobile && !listLoading && tickets.length > 0) {
           const firstUnread = tickets.find((t) => t.messageProcessingStatus === 'unread' || t.messageProcessingStatus === 'unreplied');
           const targetId = firstUnread ? firstUnread.id : tickets[0].id;
-          navigate(`/mailbox/${targetId}${mailboxSearchSuffix}`, { replace: true });
+          navigate(`/ticket/${targetId}${mailboxSearchSuffix}`, { replace: true });
         } else if (!listLoading && tickets.length === 0) {
           setSelectedTicket(null);
         }
@@ -1551,7 +1551,7 @@ export default function H5MailboxPage() {
       if (!isMobile && tickets.length > 0) {
         const firstUnread = tickets.find((t) => t.messageProcessingStatus === 'unread' || t.messageProcessingStatus === 'unreplied');
         const targetId = firstUnread ? firstUnread.id : tickets[0].id;
-        navigate(`/mailbox/${targetId}`);
+        navigate(`/ticket/${targetId}`);
       }
     }
   }, [ticketId, navigate, tickets, live, listLoading, mailboxSearchSuffix, isMobile]);
@@ -1748,7 +1748,7 @@ export default function H5MailboxPage() {
             <p className="mt-1 text-amber-900/90">
               地址栏含筛选参数 <code className="rounded bg-amber-100 px-1 text-xs">?filter={filter}</code>
               ，可能没有符合条件的工单。可
-              <Link to="/mailbox" className="underline font-medium text-amber-950 mx-0.5">
+              <Link to="/inbox" className="underline font-medium text-amber-950 mx-0.5">
                 进入收件箱（清除筛选）
               </Link>
               再试。
@@ -1792,11 +1792,13 @@ export default function H5MailboxPage() {
             orders={ordersForList}
             customers={customersForList}
             selectedTicketId={ticketId}
+            listPaginationMode="infinite"
             mailboxSearchSuffix={mailboxSearchSuffix}
             onInboxSynced={() => setListReloadNonce((n) => n + 1)}
             onTicketHover={live ? prefetchTicketDetail : undefined}
             className="w-full border-none"
             ticketDetailPathPrefix="/ticket"
+            onTicketPatch={handleUpdateTicketById}
             {...(live
               ? {
                   listSearchQuery: inboxListSearchInput,
@@ -1826,7 +1828,7 @@ export default function H5MailboxPage() {
               <>
                 <div className="border-b border-slate-200 bg-white px-3 py-2 flex items-center justify-between shrink-0">
                   <button 
-                    onClick={() => navigate('/')}
+                    onClick={() => navigate('/inbox')}
                     className="p-1 -ml-1 text-slate-500 hover:bg-slate-100 rounded-md"
                   >
                     <ArrowRight className="w-5 h-5 rotate-180" />

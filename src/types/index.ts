@@ -139,6 +139,8 @@ export interface Ticket {
   intent: string;
   /** 未读 / 未回复 / 已回复 */
   messageProcessingStatus: MessageProcessingStatus;
+  /** 母系统同步的未读消息条数（列表角标；无数据时未读态兜底为 1） */
+  unreadCount?: number;
   /** 列表/详情「译入」展示用标题（如中文）；与 subjectOriginal 二选一展示取决于是否开启自动翻译 */
   subject: string;
   /** 平台侧原文标题（多为英文）。关闭自动翻译时列表只展示此项，不调用翻译模型 */

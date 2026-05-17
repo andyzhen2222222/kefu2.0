@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "vite --port=5173 --mode mock",
     "dev:mock": "vite --port=5173 --mode mock",
-    "dev:api": "vite --port=4001 --mode api",
+    "dev:api": "vite --port=4000 --mode api",
     "dev:stack": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/win-dev-stack.ps1",
-    "dev:live": "vite --port=4001 --mode api",
+    "dev:live": "vite --port=4000 --mode api",
     "dev:h5": "vite --port=4002 --mode h5",
     "intellidesk:setup-db": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-live.ps1",
     "build": "vite build",

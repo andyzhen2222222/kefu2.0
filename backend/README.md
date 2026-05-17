@@ -11,7 +11,7 @@ Node + Express + Prisma(PostgreSQL) + WebSocket，对齐仓库根目录 `PRD_Bac
 5. 种子数据（二选一）：
    - **全量演示**（工单/订单/售后等）：`npm run db:seed` 或 `npm run db:deploy`
    - **生产骨架**（仅租户、用户、渠道、坐席、规则，无业务单）：`npm run db:seed:production` 或 `npm run db:deploy:production`
-6. 开发：`npm run dev` → API `http://localhost:4000`，WS `ws://localhost:4000/ws?tenantId=<种子租户UUID>`（默认 `PORT=4000`，与根目录 Vite 联调端口 4001 错开）
+6. 开发：`npm run dev` → API `http://localhost:4001`，WS `ws://localhost:4001/ws?tenantId=<种子租户UUID>`（默认 `PORT=4001`，与根目录 PC 前端 Vite 联调端口 4000 错开）
 
 ## 豆包 / 火山方舟 AI 配置
 
@@ -108,7 +108,7 @@ X-Tenant-Id: 11111111-1111-4111-8111-111111111111
 
 ## 与前端联调
 
-在 IntelliDesk Web 中配置同源反向代理，将 `/api` 指到本服务。本地联调推荐：根目录 `npm run dev:api`（Vite `:4001` 已代理 `/api`、`/ws` 至后端 `:4000`），环境变量 `VITE_API_BASE_URL=http://localhost:4001`。
+在 IntelliDesk Web 中配置同源反向代理，将 `/api` 指到本服务。本地联调推荐：根目录 `npm run dev:api`（PC Vite `:4000` 已代理 `/api`、`/ws` 至后端默认 `:4001`），环境变量 `VITE_API_BASE_URL=http://localhost:4000`。
 
 ## 目录
 

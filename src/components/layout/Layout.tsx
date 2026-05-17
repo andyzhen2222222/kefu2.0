@@ -3,7 +3,6 @@ import Sidebar from './Sidebar';
 import Header from './Header';
 import MobileBottomNav from './MobileBottomNav';
 import MobileHeader from './MobileHeader';
-import IntellideskSourceStrip from '@/src/components/dev/IntellideskSourceStrip';
 import { useIsMobile } from '@/src/hooks/useIsMobile';
 import { cn } from '@/src/lib/utils';
 
@@ -12,7 +11,6 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-slate-50 font-sans text-slate-900 antialiased">
-      <IntellideskSourceStrip />
       {!isMobile ? <Header /> : <MobileHeader />}
       
       <div className="relative flex min-h-0 flex-1 overflow-hidden">

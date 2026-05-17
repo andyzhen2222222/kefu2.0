@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * 工单界面 API 冒烟：阶段 A–H（需后端已启动，默认 http://127.0.0.1:4000）
+ * 工单界面 API 冒烟：阶段 A–H（需后端已启动，默认 http://127.0.0.1:4001）
  * 用法: node scripts/smoke-intellidesk-api.mjs
- * 环境: SMOKE_API_BASE=http://127.0.0.1:4000 SMOKE_MOTHER_TOKEN=xxx（可选，测 inbox 同步）
+ * 环境: SMOKE_API_BASE=http://127.0.0.1:4001 SMOKE_MOTHER_TOKEN=xxx（可选，测 inbox 同步）
  */
-const BASE = (process.env.SMOKE_API_BASE || 'http://127.0.0.1:4000').replace(/\/$/, '');
+const BASE = (process.env.SMOKE_API_BASE || 'http://127.0.0.1:4001').replace(/\/$/, '');
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const USER = '22222222-2222-4222-8222-222222222222';
 

@@ -302,6 +302,8 @@ const polishBody = z.object({
   draftText: z.string().min(1).max(50_000),
   tone: polishToneSchema.optional(),
   style: polishStyleSchema.optional(),
+  /** 自定义润色方案提示词（设置页配置）；优先于 tone/style */
+  promptBlock: z.string().min(1).max(8_000).optional(),
 });
 
 router.post('/polish', async (req: TenantRequest, res) => {
@@ -330,12 +332,13 @@ router.post('/polish', async (req: TenantRequest, res) => {
 
   const tone = parsed.data.tone ?? 'auto';
   const style = parsed.data.style ?? 'auto';
+  const instructionBlock = parsed.data.promptBlock?.trim()
+    ? parsed.data.promptBlock.trim()
+    : `${buildPolishToneBlock(tone)}\n\n${buildPolishStyleBlock(style)}`;
   const convo = ticket.messages.map((m) => `${m.senderType}: ${m.content}`).join('\n');
   const prompt = `你是专业客服润色助手。在保持原意的前提下改写下列草稿，使其表达清晰、可直接发给买家。严格遵守下列语气与风格要求。只输出润色后的正文，不要解释。
 
-${buildPolishToneBlock(tone)}
-
-${buildPolishStyleBlock(style)}
+${instructionBlock}
 
 草稿：
 """

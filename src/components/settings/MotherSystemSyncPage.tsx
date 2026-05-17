@@ -24,7 +24,7 @@ import {
   type BackfillMode,
 } from '@/src/services/intellideskApi';
 
-const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || 'http://localhost:4001';
+const apiBase = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || 'http://localhost:4000';
 
 const BACKFILL_OPTIONS: { value: BackfillMode; label: string }[] = [
   { value: 'full', label: '全量（受单次窗口上限限制）' },

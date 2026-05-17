@@ -44,6 +44,7 @@ import { cn } from '@/src/lib/utils';
 import { platformGroupLabelForTicket } from '@/src/lib/platformLabels';
 import {
   Ticket,
+  TicketStatus,
   Sentiment,
   Message,
   Order,
@@ -53,6 +54,7 @@ import {
   AfterSalesType,
   AfterSalesStatus,
 } from '@/src/types';
+import ToggleSwitch from '@/src/components/ui/ToggleSwitch';
 import { format } from 'date-fns';
 import {
   generateReplySuggestion,
@@ -78,11 +80,12 @@ import {
   mapApiOrderToUi,
   setGlobalApiError,
   formatAiUserVisibleError,
-  type AiPolishTone,
 } from '@/src/services/intellideskApi';
 import InvoicePreviewModal from './InvoicePreviewModal';
 import SubmitAfterSalesModal from './SubmitAfterSalesModal';
 import AiSuggestionModal from './AiSuggestionModal';
+import AiPolishPicker from './AiPolishPicker';
+import type { AiPolishPreset } from '@/src/lib/aiPolishPresetsStore';
 import {
   getTranslationSettings,
   saveTranslationSettings,
@@ -128,15 +131,6 @@ const MOCK_KB_CITATIONS = [
     excerpt: '客服应在首次接触后 24 小时内给出解决方案选项（退款/补发/部分补偿），并与买家确认。',
   },
 ] as const;
-
-/** 上拉面板：点选即润色；五种语气场景互斥、文案与后端一致 */
-const AI_POLISH_TONE_OPTIONS: { value: AiPolishTone; label: string; hint: string }[] = [
-  { value: 'auto', label: '自动（依情境）', hint: '由模型按工单与对话选最合适语气' },
-  { value: 'warm_friendly', label: '温馨友好', hint: '日常咨询与一般安抚，亲切不煽情' },
-  { value: 'professional_formal', label: '专业正式', hint: '技术/账户/规则与流程，客观可核对' },
-  { value: 'concise_clear', label: '简洁干练', hint: '结论与下一步为主，少客套少重复' },
-  { value: 'apologetic', label: '诚恳致歉', hint: '我方疏失或体验不佳时道歉与补救' },
-];
 
 function buildMainSystemOrderUrl(order: Order): string {
   const base =
@@ -269,9 +263,8 @@ export default function TicketDetail({
   const [isAiGenerated, setIsAiGenerated] = useState(false);
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [isPolishing, setIsPolishing] = useState(false);
-  const [aiPolishTone, setAiPolishTone] = useState<AiPolishTone>('auto');
-  /** 当前正在润色的语气（用于行内 loading） */
-  const [polishingTone, setPolishingTone] = useState<AiPolishTone | null>(null);
+  /** 当前正在润色的方案 id（用于行内 loading） */
+  const [polishingPresetId, setPolishingPresetId] = useState<string | null>(null);
   const [isInternalNote, setIsInternalNote] = useState(false);
   const [showTemplatePopover, setShowTemplatePopover] = useState(false);
   const [showAiPolishPopover, setShowAiPolishPopover] = useState(false);
@@ -296,7 +289,7 @@ export default function TicketDetail({
         }
       } catch { /* ignore */ }
     }
-    return ['ai-insight', 'order', 'logistics', 'invoice', 'after-sales'];
+    return ['ai-insight', 'order', 'invoice', 'logistics', 'after-sales'];
   });
 
   const [activeTab, setActiveTab] = useState<TabId>(() => tabOrder[0]);
@@ -871,17 +864,15 @@ export default function TicketDetail({
     setIsAiModalOpen(false);
   };
 
-  const runPolishWithTone = async (tone: AiPolishTone) => {
+  const runPolishWithPreset = async (preset: AiPolishPreset) => {
     if (isPolishing || !replyText.trim()) return;
 
-    setAiPolishTone(tone);
-    setPolishingTone(tone);
+    setPolishingPresetId(preset.id);
     setIsPolishing(true);
     setGlobalApiError(null);
     try {
       const polished = await generateReplyPolish(replyText, ticket, messages, order, user?.id, {
-        tone,
-        style: 'auto',
+        promptBlock: preset.prompt,
       });
       if (polished) {
         setReplyText(polished);
@@ -893,7 +884,7 @@ export default function TicketDetail({
       setGlobalApiError(`[AI 润色] ${formatAiUserVisibleError(error)}`);
     } finally {
       setIsPolishing(false);
-      setPolishingTone(null);
+      setPolishingPresetId(null);
     }
   };
 
@@ -1135,7 +1126,7 @@ export default function TicketDetail({
                     type="button"
                     onClick={handleAiSuggest}
                     disabled={isGeneratingDraft}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-purple-50 border border-purple-200 hover:bg-purple-100 text-xs font-bold text-purple-800 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     title="基于知识库自动生成回复草稿"
                   >
                     {isGeneratingDraft ? (
@@ -1157,10 +1148,11 @@ export default function TicketDetail({
                   <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center mb-3">
                     <Sparkles className="w-6 h-6 text-slate-300" />
                   </div>
-                  <p className="text-xs text-slate-500 max-w-[200px] leading-relaxed mb-4">
-                    点击按钮开始分析工单，AI 将自动识别客户意图、情绪并生成摘要。
+                  <p className="text-xs text-slate-500 max-w-[240px] leading-relaxed mb-4">
+                    点击下方按钮开始分析工单，AI 将为您提炼核心诉求、推荐回复策略。
                   </p>
                   <button
+                    type="button"
                     onClick={() => void handleTicketInsight()}
                     className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50 shadow-sm transition-all"
                   >
@@ -1168,9 +1160,9 @@ export default function TicketDetail({
                   </button>
                   <button
                     type="button"
-                    onClick={handleAiSuggest}
+                    onClick={() => void handleAiSuggest()}
                     disabled={isGeneratingDraft}
-                    className="mt-3 w-full max-w-[260px] flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl bg-purple-50 border border-purple-200 hover:bg-purple-100 text-xs font-bold text-purple-800 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="mt-3 w-full max-w-[260px] flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg bg-blue-600 hover:bg-blue-700 text-xs font-bold text-white transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     title="基于知识库自动生成回复草稿"
                   >
                     {isGeneratingDraft ? (
@@ -2023,6 +2015,41 @@ export default function TicketDetail({
               />
             </div>
 
+            {onUpdateTicket && !isMobile && (
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 lg:pt-1">
+                <button
+                  type="button"
+                  onClick={() => onUpdateTicket({ messageProcessingStatus: 'unread' })}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
+                >
+                  标记为未读
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onUpdateTicket({
+                      messageProcessingStatus: 'replied',
+                      status: TicketStatus.RESOLVED,
+                    })
+                  }
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
+                >
+                  标记为已解决
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('确定要关闭该工单吗？')) {
+                      onUpdateTicket({ status: TicketStatus.RESOLVED });
+                    }
+                  }}
+                  className="rounded-lg border border-orange-200 bg-[#F97316] px-3 py-1.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-orange-600"
+                >
+                  关闭工单
+                </button>
+              </div>
+            )}
+
             {((seatOptions && seatOptions.length > 0 && onAssignSeat) || onUpdateTicket) && (
               <div className={cn(
                 "flex shrink-0 lg:pt-1 lg:items-end",
@@ -2434,12 +2461,12 @@ export default function TicketDetail({
             {isReplyExpanded && (
               <div className="flex flex-col gap-2 w-full min-w-0 animate-in fade-in slide-in-from-bottom-2 duration-200">
                 <div className="flex flex-wrap items-center gap-3 w-full min-w-0">
-                  <div className="flex bg-slate-100 p-1 rounded-lg shrink-0">
+                  <div className="flex shrink-0 border-b border-slate-200">
                   <button 
                     onClick={() => setIsInternalNote(false)}
                     className={cn(
-                      "px-4 py-1.5 rounded-md text-xs font-medium transition-all",
-                      !isInternalNote ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                      "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+                      !isInternalNote ? "border-[#F97316] text-[#F97316]" : "border-transparent text-slate-500 hover:text-slate-700"
                     )}
                   >
                     回复买家
@@ -2447,8 +2474,8 @@ export default function TicketDetail({
                   <button 
                     onClick={() => setIsInternalNote(true)}
                     className={cn(
-                      "px-4 py-1.5 rounded-md text-xs font-medium transition-all",
-                      isInternalNote ? "bg-white text-[#F97316] shadow-sm" : "text-slate-500 hover:text-slate-700"
+                      "px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+                      isInternalNote ? "border-[#F97316] text-[#F97316]" : "border-transparent text-slate-500 hover:text-slate-700"
                     )}
                   >
                     内部备注
@@ -2456,84 +2483,7 @@ export default function TicketDetail({
                 </div>
                 
                 <div className="flex flex-wrap items-center justify-end gap-2 flex-1 min-w-0 sm:ml-auto">
-                  {!isInternalNote && (
-                    <div className="relative" ref={translationPopoverRef}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowTemplatePopover(false);
-                          setShowEmojiPicker(false);
-                          setShowAiPolishPopover(false);
-                          setShowTranslationPopover((v) => !v);
-                        }}
-                        className={cn(
-                          "inline-flex items-center gap-1.5 px-3 py-1.5 border hover:bg-slate-50 rounded-lg text-xs font-medium transition-colors shadow-sm",
-                          showTranslationPopover ? "bg-slate-50 border-slate-300 text-slate-900" : "bg-white border-slate-200 text-slate-700"
-                        )}
-                        title="查看翻译配置"
-                      >
-                        <Languages className="w-3.5 h-3.5 text-slate-500 shrink-0" strokeWidth={2} />
-                        自动翻译
-                        <ChevronUp className={cn("w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform", showTranslationPopover && "rotate-180")} />
-                      </button>
-
-                      {showTranslationPopover && (
-                        <div className="absolute right-0 bottom-full mb-2 w-[320px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
-                          <div className="p-4 space-y-4">
-                            <div className="flex items-center justify-between">
-                              <div className="space-y-0.5">
-                                <p className="text-xs font-bold text-slate-900">我的语言与自动翻译</p>
-                                <p className="text-[10px] text-slate-400">将外语消息（含同步信息）译为 {getInboundTargetLangLabel(translationSettings.inboundTargetLang)}</p>
-                              </div>
-                              <div
-                                className={cn(
-                                  'relative h-5 w-9 shrink-0 rounded-full transition-colors',
-                                  translationSettings.inboundTranslateEnabled ? 'bg-[#F97316]/50' : 'bg-slate-200/50'
-                                )}
-                              >
-                                <span
-                                  className={cn(
-                                    'absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
-                                    translationSettings.inboundTranslateEnabled ? 'translate-x-4' : 'translate-x-0'
-                                  )}
-                                />
-                              </div>
-                            </div>
-
-                            <div className="flex items-center justify-between border-t border-slate-100 pt-3">
-                              <div className="space-y-0.5">
-                                <p className="text-xs font-bold text-slate-900">发送信息自动翻译</p>
-                                <p className="text-[10px] text-slate-400">发送前自动译为 {getPlatformLanguageLabel()}</p>
-                              </div>
-                              <div
-                                className={cn(
-                                  'relative h-5 w-9 shrink-0 rounded-full transition-colors',
-                                  translationSettings.outboundTranslateOnSend ? 'bg-[#F97316]/50' : 'bg-slate-200/50'
-                                )}
-                              >
-                                <span
-                                  className={cn(
-                                    'absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
-                                    translationSettings.outboundTranslateOnSend ? 'translate-x-4' : 'translate-x-0'
-                                  )}
-                                />
-                              </div>
-                            </div>
-
-                            <div className="bg-slate-50 border border-slate-100 p-2.5 rounded-lg flex items-start gap-2">
-                              <Info className="w-3.5 h-3.5 text-slate-400 mt-0.5 shrink-0" />
-                              <p className="text-[10px] text-slate-500 leading-relaxed">
-                                上述为系统当前状态，若需修改请前往
-                                <Link to="/settings/translation" className="text-blue-600 hover:text-blue-700 hover:underline mx-0.5 font-bold">系统设置</Link>
-                                。
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <div className="relative" ref={templatePopoverRef}>
+                                    <div className="relative" ref={templatePopoverRef}>
                     <button
                       type="button"
                       onClick={() => {
@@ -2669,85 +2619,69 @@ export default function TicketDetail({
                     )}
                   </div>
 
-                  <div className="relative" ref={aiPolishPopoverRef}>
+                                    {!isInternalNote && (
                     <button
                       type="button"
                       onClick={() => {
-                        setShowTranslationPopover(false);
                         setShowTemplatePopover(false);
                         setShowEmojiPicker(false);
-                        setShowAiPolishPopover((v) => !v);
+                        setShowAiPolishPopover(false);
+                        setShowTranslationPopover(false);
+                        void handleAiSuggest();
                       }}
-                      disabled={isPolishing || !replyText.trim()}
-                      className={cn(
-                        'flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs font-bold transition-colors shadow-sm shrink-0',
-                        showAiPolishPopover
-                          ? 'bg-indigo-100 border-indigo-200 text-indigo-900'
-                          : 'bg-indigo-50 border-indigo-100 text-indigo-700 hover:bg-indigo-100',
-                        (!replyText.trim() || isPolishing) && 'opacity-50 cursor-not-allowed'
-                      )}
-                      title={
-                        !replyText.trim()
-                          ? '请先在输入框填写草稿，再点选语气一键润色'
-                          : '点开后直接选语气，一次点击即润色'
-                      }
+                      disabled={isGeneratingDraft}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 hover:bg-slate-50 rounded-lg text-xs font-medium text-slate-700 transition-colors shadow-sm bg-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="AI 辅助：生成回复建议"
                     >
-                      {isPolishing ? (
+                      {isGeneratingDraft ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
                       ) : (
-                        <Pencil className="w-3.5 h-3.5 shrink-0" />
+                        <Sparkles className="w-3.5 h-3.5 text-blue-600 shrink-0" />
                       )}
-                      AI 润色
-                      <ChevronUp
-                        className={cn(
-                          'w-3.5 h-3.5 text-indigo-500/80 shrink-0 transition-transform',
-                          showAiPolishPopover && 'rotate-180'
-                        )}
-                      />
+                      AI 辅助
                     </button>
+                  )}
 
-                    {showAiPolishPopover && (
-                      <div className="absolute right-0 bottom-full mb-2 w-[min(22rem,calc(100vw-2rem))] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
-                        <div className="p-2.5 border-b border-slate-100 bg-slate-50/50">
-                          <p className="text-xs font-bold text-slate-900">选择语气</p>
-                          <p className="text-[10px] text-slate-500 mt-0.5">点一项立即润色（风格固定为自动优化）</p>
-                        </div>
-                        <div className="p-2 max-h-[min(360px,50vh)] overflow-y-auto space-y-1">
-                          {AI_POLISH_TONE_OPTIONS.map((opt) => {
-                            const busy = isPolishing && polishingTone === opt.value;
-                            return (
-                              <button
-                                key={opt.value}
-                                type="button"
-                                onClick={() => {
-                                  void runPolishWithTone(opt.value);
-                                }}
-                                disabled={isPolishing || !replyText.trim()}
-                                className={cn(
-                                  'w-full text-left rounded-lg px-3 py-2 transition-colors border',
-                                  aiPolishTone === opt.value && !isPolishing
-                                    ? 'border-indigo-200 bg-indigo-50/80'
-                                    : 'border-transparent hover:bg-slate-50',
-                                  (isPolishing || !replyText.trim()) && 'opacity-60 cursor-not-allowed hover:bg-transparent'
-                                )}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-xs font-bold text-slate-900">{opt.label}</span>
-                                  {busy ? (
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600 shrink-0" />
-                                  ) : null}
-                                </div>
-                                <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{opt.hint}</p>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  {!isInternalNote && replyText.trim() ? (
+                    <div className="relative" ref={aiPolishPopoverRef}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowTemplatePopover(false);
+                          setShowEmojiPicker(false);
+                          setShowTranslationPopover(false);
+                          setShowAiPolishPopover((v) => !v);
+                        }}
+                        disabled={isPolishing}
+                        className={cn(
+                          'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium shadow-sm transition-colors',
+                          showAiPolishPopover
+                            ? 'border-indigo-200 bg-indigo-50 text-indigo-900'
+                            : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
+                          isPolishing && 'cursor-wait opacity-70'
+                        )}
+                        title="AI 润色：按方案改写当前草稿"
+                      >
+                        {isPolishing ? (
+                          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-indigo-600" />
+                        ) : (
+                          <Pencil className="h-3.5 w-3.5 shrink-0 text-indigo-600" />
+                        )}
+                        AI 润色
+                      </button>
+                      {showAiPolishPopover ? (
+                        <AiPolishPicker
+                          disabled={!replyText.trim()}
+                          isPolishing={isPolishing}
+                          polishingPresetId={polishingPresetId}
+                          onSelectPreset={(preset) => void runPolishWithPreset(preset)}
+                        />
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               </div>
-              </div>
+            </div>
             )}
 
             <div className="relative group">
@@ -2859,53 +2793,23 @@ export default function TicketDetail({
                     <div className="flex items-center gap-4">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-medium text-slate-500">发送至:</span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setSendToCustomer((v) => !v)}
-                            className={cn(
-                              'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all',
-                              sendToCustomer
-                                ? 'border-blue-200 bg-blue-50 text-blue-900'
-                                : 'border-dashed border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50'
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border',
-                                sendToCustomer
-                                  ? 'border-blue-600 bg-blue-600 text-white'
-                                  : 'border-slate-300 bg-white'
-                              )}
-                              aria-hidden
-                            >
-                              {sendToCustomer && <Check className="w-2.5 h-2.5" strokeWidth={3} />}
-                            </span>
+                        <div className="flex items-center gap-4">
+                          <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
+                            <ToggleSwitch
+                              checked={sendToCustomer}
+                              onChange={setSendToCustomer}
+                              aria-label="发送至客户"
+                            />
                             客户
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setSendToManager((v) => !v)}
-                            className={cn(
-                              'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all',
-                              sendToManager
-                                ? 'border-amber-200 bg-amber-50 text-amber-950'
-                                : 'border-dashed border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50'
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border',
-                                sendToManager
-                                  ? 'border-amber-600 bg-amber-600 text-white'
-                                  : 'border-slate-300 bg-white'
-                              )}
-                              aria-hidden
-                            >
-                              {sendToManager && <Check className="w-2.5 h-2.5" strokeWidth={3} />}
-                            </span>
+                          </label>
+                          <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
+                            <ToggleSwitch
+                              checked={sendToManager}
+                              onChange={setSendToManager}
+                              aria-label="发送至平台经理"
+                            />
                             平台经理
-                          </button>
+                          </label>
                         </div>
                         {!outboundRecipientReady && (
                           <span className="text-amber-600 text-[11px] font-medium w-full sm:w-auto">

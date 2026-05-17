@@ -35,6 +35,7 @@ export function mapTicket(
     sentiment: t.sentiment,
     intent: t.intent,
     messageProcessingStatus: t.messageProcessingStatus,
+    unreadCount: t.unreadCount,
     subject: t.subject,
     subjectOriginal: t.subjectOriginal,
     createdAt: t.createdAt.toISOString(),

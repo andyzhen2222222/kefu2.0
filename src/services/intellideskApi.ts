@@ -4,7 +4,7 @@
  * - 默认：未设 `VITE_API_BASE_URL` → 演示/mock 数据。
  * - 显式：`VITE_INTELLIDESK_DATA_SOURCE=mock` 时强制 mock（即使误配了 API 地址）。
  * - 联调：`VITE_INTELLIDESK_DATA_SOURCE=api` 且配置 `VITE_API_BASE_URL`。
- * 本地：`npm run dev` / `dev:mock` → mock UI（默认端口 5173，建议用 http://127.0.0.1:5173）；`dev:api` / `dev:live` → http://127.0.0.1:4001 代理 /api 到后端 :4000。
+ * 本地：`npm run dev` / `dev:mock` → mock UI（默认端口 5173，建议用 http://127.0.0.1:5173）；`dev:api` / `dev:live` → http://127.0.0.1:4000（PC 前端），同源代理 /api 到后端默认 :4001。
  */
 import { enrichOrderStoreEntityWithNezha } from '@/src/lib/shippingAddressText';
 import type { AfterSalesRecord, Customer, Message, Order, Ticket, User } from '@/src/types';
@@ -18,7 +18,7 @@ import {
 const base = () => (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 
 /**
- * 拼接后端 API URL。联调站点根应为 `http://localhost:4001`（由 Vite 代理 /api 至后端 :4000）；
+ * 拼接后端 API URL。联调站点根应为 `http://localhost:4000`（PC：Vite 占 4000，代理 /api 至后端默认 :4001）；
  * 若误配为 `.../api` 则不再重复拼一段 `/api`。
  */
 export function resolveApiUrl(pathAfterApi: string): string {
@@ -130,7 +130,7 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<R
       (e instanceof TypeError && /fetch|network/i.test(msg))
     ) {
       throw new Error(
-        '无法连接后端 API（Failed to fetch）。请确认：① 在 backend 目录执行并保持运行 npm run dev（默认端口 4000）；② 前端使用 npm run dev:api，浏览器打开 http://127.0.0.1:4001（Windows 上勿仅用 localhost，避免 IPv6）；③ .env.api 中 VITE_API_BASE_URL 与地址栏一致；④ 后端与 Vite 勿占用同一端口。也可运行 npm run diag:dev 做端口与健康检查。'
+        '无法连接后端 API（Failed to fetch）。请确认：① 在 backend 目录执行并保持运行 npm run dev（默认端口 4001）；② 前端使用 npm run dev:api，浏览器打开 http://127.0.0.1:4000（Windows 上勿仅用 localhost，避免 IPv6）；③ .env.api 中 VITE_API_BASE_URL 与地址栏一致；④ 后端与 Vite 勿占用同一端口。也可运行 npm run diag:dev 做端口与健康检查。'
       );
     }
     throw e instanceof Error ? e : new Error(msg);
@@ -181,7 +181,7 @@ export async function resolveSessionUserFromAccount(
       return {
         user: null,
         error:
-          '登录接口返回 404：请确认 ① 后端已用当前代码重启（含 POST /api/auth/session-from-account）；② VITE_API_BASE_URL 为站点根（联调如 http://localhost:4001），不要写成 …/api；③ 租户 ID 与数据库一致。',
+          '登录接口返回 404：请确认 ① 后端已用当前代码重启（含 POST /api/auth/session-from-account）；② VITE_API_BASE_URL 为站点根（联调如 http://localhost:4000），不要写成 …/api；③ 租户 ID 与数据库一致。',
       };
     }
     return { user: null, error: `请求失败（${res.status}）` };
@@ -233,7 +233,7 @@ async function parseError(res: Response): Promise<string> {
         return `后端暂时不可用（503）：${msg}。若使用 Docker 数据库：先启动 Docker Desktop，再在项目根目录执行 npm run dev:stack，然后 backend 终端 npm run dev、根目录 npm run dev:api。`;
       }
       if (res.status >= 500) {
-        return `服务异常（${res.status}）：${msg}。请确认 4000 为后端（非 Vite）、PostgreSQL 已启动；可在 backend 执行 npx prisma db push 与 npm run db:seed，或根目录 npm run dev:stack。`;
+        return `服务异常（${res.status}）：${msg}。请确认 4001 为后端（非 Vite）、PostgreSQL 已启动；可在 backend 执行 npx prisma db push 与 npm run db:seed，或根目录 npm run dev:stack。`;
       }
       if (res.status === 401 || res.status === 403) {
         return `鉴权失败（${res.status}）：${msg}`;
@@ -243,7 +243,7 @@ async function parseError(res: Response): Promise<string> {
     return t || res.statusText;
   } catch {
     if (res.status === 502 || res.status === 504) {
-      return `网关超时或无法连接后端（${res.status}）。请另开终端 cd backend && npm run dev（默认 4000），并确认本机 netstat 中 4000 为 LISTENING；前端保持 npm run dev:api 占 4001。`;
+      return `网关超时或无法连接后端（${res.status}）。请另开终端 cd backend && npm run dev（默认 4001），并确认本机 netstat 中 4001 为 LISTENING；前端保持 npm run dev:api 占 4000。`;
     }
     const raw = (t || '').trim();
     const looksHtml = raw.startsWith('<!') || raw.toLowerCase().includes('<html');
@@ -251,7 +251,7 @@ async function parseError(res: Response): Promise<string> {
       res.status === 500 &&
       (looksHtml || !raw || raw === 'Internal Server Error')
     ) {
-      return '后端未响应或返回了非 JSON（多为 4000 上没有跑 Express）。请：① 另开终端 cd backend && npm run dev；② 若 Prisma 报连不上库，在项目根目录执行 npm run dev:stack 启动 Docker 里的 Postgres；③ 用 netstat -ano | findstr :4000 确认 4000 在监听（只有 4001 没有 4000 时一定会失败）。';
+      return '后端未响应或返回了非 JSON（多为 4001 上未跑 Express 或代理指错端口）。请：① 另开终端 cd backend && npm run dev；② 若 Prisma 报连不上库，在项目根目录执行 npm run dev:stack 启动 Docker 里的 Postgres；③ 用 netstat -ano | findstr :4001 确认后端在监听，且 PC 前端为 4000（只有 4000 没有 4001 时一定会失败）。';
     }
     return raw || res.statusText;
   }
@@ -260,7 +260,7 @@ async function parseError(res: Response): Promise<string> {
 /** 将 fetch 错误与 HTTP 错误统一成可读文案 */
 export function intellideskFetchErrorMessage(e: unknown): string {
   if (e instanceof TypeError && (e.message.includes('fetch') || e.message.includes('Failed'))) {
-    return '无法连接后端：浏览器显示 Failed to fetch 时，多为后端 4000 未监听或 tsx watch 正在重启（Vite 代理会短暂 ECONNREFUSED）。请在 backend 目录执行 npm run dev，看到「IntelliDesk API http://localhost:4000」后再提交；开发时避免在提交瞬间保存后端文件触发重启。';
+    return '无法连接后端：浏览器显示 Failed to fetch 时，多为后端 4001 未监听或 tsx watch 正在重启（Vite 代理会短暂 ECONNREFUSED）。请在 backend 目录执行 npm run dev，看到「IntelliDesk API http://localhost:4001」后再提交；开发时避免在提交瞬间保存后端文件触发重启。';
   }
   if (e instanceof Error) return e.message;
   if (typeof e === 'object' && e !== null) return JSON.stringify(e);
@@ -275,18 +275,18 @@ export function splitSeatSyncApiError(detail: string): { summary: string; detail
   if (!d) return { summary: '坐席列表暂时无法更新', detail: '' };
   if (d.includes('无法连接后端') || d.includes('Failed to fetch') || d.includes('ECONNREFUSED')) {
     return {
-      summary: '无法连接后端：请先在 backend 目录执行 npm run dev（默认监听 4000），前端使用 npm run dev:api（4001 代理到 4000）。',
+      summary: '无法连接后端：请先在 backend 目录执行 npm run dev（默认监听 4001），前端使用 npm run dev:api（PC 占 4000，代理到 4001）。',
       detail: d,
     };
   }
-  if (d.includes('非 JSON') || (d.includes('4000') && d.includes('Express'))) {
+  if (d.includes('非 JSON') || ((d.includes('4000') || d.includes('4001')) && d.includes('Express'))) {
     return {
-      summary: '后端未返回有效接口数据：常见为 4000 未跑 API、或返回了 HTML 错误页；请确认仅后端占 4000、Vite 占 4001。',
+      summary: '后端未返回有效接口数据：常见为后端未跑 API、或返回了 HTML 错误页；请确认后端占 4001、PC 前端 Vite 占 4000。',
       detail: d,
     };
   }
   if (d.includes('网关超时') || d.includes('502') || d.includes('504')) {
-    return { summary: '网关超时或暂时连不上后端，请稍后重试或检查 4000 是否在监听。', detail: d };
+    return { summary: '网关超时或暂时连不上后端，请稍后重试或检查后端 4001 是否在监听。', detail: d };
   }
   if (d.includes('鉴权失败') || d.includes('401') || d.includes('403')) {
     return { summary: '鉴权失败，请重新登录或检查租户/用户请求头。', detail: d };
@@ -337,6 +337,7 @@ export type ApiTicketRaw = {
   sentiment: string;
   intent: string;
   messageProcessingStatus: string;
+  unreadCount?: number;
   subject: string;
   subjectOriginal?: string | null;
   createdAt: string;
@@ -513,6 +514,8 @@ export function mapApiTicketToUi(raw: ApiTicketRaw & { lastInboundPreview?: stri
     sentiment: mapSentiment(raw.sentiment),
     intent: raw.intent ?? '',
     messageProcessingStatus: mapMessageProcessingStatus(raw.messageProcessingStatus),
+    unreadCount:
+      typeof raw.unreadCount === 'number' && raw.unreadCount >= 0 ? raw.unreadCount : undefined,
     subject: raw.subject ?? '',
     subjectOriginal: raw.subjectOriginal ?? undefined,
     createdAt: raw.createdAt,
@@ -1162,14 +1165,17 @@ export async function postAiPolish(
   userId: string | undefined,
   ticketId: string,
   draftText: string,
-  options?: { tone?: AiPolishTone; style?: AiPolishStyle }
+  options?: { tone?: AiPolishTone; style?: AiPolishStyle; promptBlock?: string }
 ): Promise<{ polished: string }> {
   const tone = options?.tone ?? 'auto';
   const style = options?.style ?? 'auto';
+  const body: Record<string, unknown> = { ticketId, draftText, tone, style };
+  const promptBlock = options?.promptBlock?.trim();
+  if (promptBlock) body.promptBlock = promptBlock;
   const res = await apiFetch(`${base()}/api/ai/polish`, {
     method: 'POST',
     headers: await intellideskHeadersWithAuth(tenantId, userId),
-    body: JSON.stringify({ ticketId, draftText, tone, style }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<{ polished: string }>;

@@ -40,6 +40,18 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/src/lib/utils';
+import H5ComposerBar, { type H5ComposerNotice } from '@/src/h5/components/H5ComposerBar';
+import H5TabBottomBar from '@/src/h5/components/H5TabBottomBar';
+import {
+  H5_DETAIL_TAB_ACTIVE,
+  H5_DETAIL_TAB_BAR,
+  H5_DETAIL_TAB_BTN,
+  H5_DETAIL_TAB_INACTIVE,
+  H5_DETAIL_TAB_SCROLL,
+  H5_TAB_BTN_ACCENT,
+  H5_TAB_BTN_PRIMARY,
+  H5_TAB_BTN_SECONDARY,
+} from '@/src/h5/h5UiSpec';
 import { platformGroupLabelForTicket } from '@/src/lib/platformLabels';
 import {
   Ticket,
@@ -59,7 +71,6 @@ import {
   summarizeTicketById,
 } from '@/src/services/geminiService';
 import { useAuth } from '@/src/hooks/useAuth';
-import { useIsMobile } from '@/src/hooks/useIsMobile';
 import {
   intellideskConfigured,
   intellideskTenantId,
@@ -76,11 +87,13 @@ import {
   mapApiOrderToUi,
   setGlobalApiError,
   formatAiUserVisibleError,
-  type AiPolishTone,
 } from '@/src/services/intellideskApi';
 import InvoicePreviewModal from '@/src/components/ticket/InvoicePreviewModal';
 import SubmitAfterSalesModal from '@/src/components/ticket/SubmitAfterSalesModal';
 import AiSuggestionModal from '@/src/components/ticket/AiSuggestionModal';
+import AiPolishPicker from '@/src/components/ticket/AiPolishPicker';
+import type { AiPolishPreset } from '@/src/lib/aiPolishPresetsStore';
+import Drawer from '@/src/components/ui/Drawer';
 import {
   getTranslationSettings,
   saveTranslationSettings,
@@ -104,10 +117,7 @@ import {
 import { appendStoredCitationFeedback } from '@/src/lib/citationFeedbackStore';
 import { displayOrderShippingAddress, formatOrderMoney } from '@/src/lib/orderDisplay';
 import { htmlishMessageToPlainText, messageSenderLabel } from '@/src/lib/messageContent';
-import {
-  formatAfterSalesReadableLabel,
-  formatTicketReadableRef,
-} from '@/src/lib/businessRefDisplay';
+import { formatAfterSalesReadableLabel } from '@/src/lib/businessRefDisplay';
 
 const DEFAULT_MAIN_SYSTEM_ORDER_BASE =
   'https://tiaojia.nezhachuhai.com/dashboard/analyzeOrder/platformOrderDetail';
@@ -126,15 +136,6 @@ const MOCK_KB_CITATIONS = [
     excerpt: '客服应在首次接触后 24 小时内给出解决方案选项（退款/补发/部分补偿），并与买家确认。',
   },
 ] as const;
-
-/** 上拉面板：点选即润色；五种语气场景互斥、文案与后端一致 */
-const AI_POLISH_TONE_OPTIONS: { value: AiPolishTone; label: string; hint: string }[] = [
-  { value: 'auto', label: '自动（依情境）', hint: '由模型按工单与对话选最合适语气' },
-  { value: 'warm_friendly', label: '温馨友好', hint: '日常咨询与一般安抚，亲切不煽情' },
-  { value: 'professional_formal', label: '专业正式', hint: '技术/账户/规则与流程，客观可核对' },
-  { value: 'concise_clear', label: '简洁干练', hint: '结论与下一步为主，少客套少重复' },
-  { value: 'apologetic', label: '诚恳致歉', hint: '我方疏失或体验不佳时道歉与补救' },
-];
 
 function buildMainSystemOrderUrl(order: Order): string {
   const base =
@@ -261,23 +262,19 @@ export default function H5TicketDetail({
   agentSeatDisplayName = null,
 }: TicketDetailProps) {
   const { user } = useAuth();
-  const isMobile = useIsMobile();
   const [replyText, setReplyText] = useState('');
   const [isAiGenerated, setIsAiGenerated] = useState(false);
   const [isGeneratingDraft, setIsGeneratingDraft] = useState(false);
   const [isPolishing, setIsPolishing] = useState(false);
-  const [aiPolishTone, setAiPolishTone] = useState<AiPolishTone>('auto');
-  /** 当前正在润色的语气（用于行内 loading） */
-  const [polishingTone, setPolishingTone] = useState<AiPolishTone | null>(null);
-  const [isInternalNote, setIsInternalNote] = useState(false);
+  const [polishingPresetId, setPolishingPresetId] = useState<string | null>(null);
+  const [showPolishSheet, setShowPolishSheet] = useState(false);
   const [showTemplatePopover, setShowTemplatePopover] = useState(false);
   const [showAiPolishPopover, setShowAiPolishPopover] = useState(false);
-  const [showTranslationPopover, setShowTranslationPopover] = useState(false);
-  const translationPopoverRef = useRef<HTMLDivElement>(null);
+  const [isTranslatingDraft, setIsTranslatingDraft] = useState(false);
+  const [composerNotice, setComposerNotice] = useState<H5ComposerNotice | null>(null);
+  const composerNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const templatePopoverRef = useRef<HTMLDivElement>(null);
   const aiPolishPopoverRef = useRef<HTMLDivElement>(null);
-  const emojiPopoverRef = useRef<HTMLDivElement>(null);
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [templateSearchQuery, setTemplateSearchQuery] = useState('');
   
   type TabId = 'chat' | 'order' | 'logistics' | 'invoice' | 'after-sales' | 'ai-insight';
@@ -307,7 +304,6 @@ export default function H5TicketDetail({
   const [editingInternalNoteId, setEditingInternalNoteId] = useState<string | null>(null);
   const [editingInternalNoteDraft, setEditingInternalNoteDraft] = useState('');
   const [savingInternalNote, setSavingInternalNote] = useState(false);
-  const [isReplyExpanded, setIsReplyExpanded] = useState(false);
   const invoiceTemplate = 'commercial';
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
   const [isAfterSalesModalOpen, setIsAfterSalesModalOpen] = useState(false);
@@ -315,6 +311,8 @@ export default function H5TicketDetail({
   const [afterSalesRecords, setAfterSalesRecords] = useState<AfterSalesRecord[]>([]);
   const [sendToCustomer, setSendToCustomer] = useState(true);
   const [sendToManager, setSendToManager] = useState(false);
+  const [isInternalNote, setIsInternalNote] = useState(false);
+  const [composerFocusTrigger, setComposerFocusTrigger] = useState(0);
   const [citationMessageId, setCitationMessageId] = useState<string | null>(null);
   const [citationRecordHint, setCitationRecordHint] = useState<string | null>(null);
   const [autoInsightEnabled, setAutoInsightEnabled] = useState(() => {
@@ -455,9 +453,13 @@ export default function H5TicketDetail({
   }, []);
 
   useEffect(() => {
-    setIsReplyExpanded(false);
     setReplyText('');
     setCitationMessageId(null);
+    setComposerNotice(null);
+    if (composerNoticeTimerRef.current) {
+      clearTimeout(composerNoticeTimerRef.current);
+      composerNoticeTimerRef.current = null;
+    }
   }, [ticket.id]);
 
   /** 联调 + 开启自动翻译：入站消息无 translatedContent 时调用后端 /api/ai/translate（豆包），仅内存展示不落库 */
@@ -684,32 +686,28 @@ export default function H5TicketDetail({
   }, [ticket.id, translationSettings]);
 
   useEffect(() => {
-    if (!isInternalNote && !sendToCustomer && !sendToManager) {
+    if (!sendToCustomer && !sendToManager) {
       setSendToCustomer(true);
     }
-  }, [isInternalNote, sendToCustomer, sendToManager]);
+  }, [sendToCustomer, sendToManager]);
 
-  /** 自动翻译 / 插入模板 / AI 润色 / 表情：点击浮层外关闭；打开其一则收起其余 */
+  /** 插入模板 / AI 润色：点击浮层外关闭；打开其一则收起其余 */
   useEffect(() => {
-    if (!showTranslationPopover && !showTemplatePopover && !showAiPolishPopover && !showEmojiPicker) return;
+    if (!showTemplatePopover && !showAiPolishPopover) return;
     const onPointerDown = (e: PointerEvent) => {
       const target = e.target as Node;
       if (
-        translationPopoverRef.current?.contains(target) ||
         templatePopoverRef.current?.contains(target) ||
-        aiPolishPopoverRef.current?.contains(target) ||
-        emojiPopoverRef.current?.contains(target)
+        aiPolishPopoverRef.current?.contains(target)
       ) {
         return;
       }
-      setShowTranslationPopover(false);
       setShowTemplatePopover(false);
       setShowAiPolishPopover(false);
-      setShowEmojiPicker(false);
     };
     document.addEventListener('pointerdown', onPointerDown, true);
     return () => document.removeEventListener('pointerdown', onPointerDown, true);
-  }, [showTranslationPopover, showTemplatePopover, showAiPolishPopover, showEmojiPicker]);
+  }, [showTemplatePopover, showAiPolishPopover]);
 
   const [copiedOrderId, setCopiedOrderId] = useState(false);
 
@@ -863,25 +861,115 @@ export default function H5TicketDetail({
   const handleAdoptAiSuggestion = (text: string) => {
     setReplyText(text);
     setIsAiGenerated(true);
-    setIsReplyExpanded(true);
     setIsAiModalOpen(false);
   };
 
-  const runPolishWithTone = async (tone: AiPolishTone) => {
+  const dismissComposerNotice = () => {
+    if (composerNoticeTimerRef.current) {
+      clearTimeout(composerNoticeTimerRef.current);
+      composerNoticeTimerRef.current = null;
+    }
+    setComposerNotice(null);
+  };
+
+  useEffect(
+    () => () => {
+      if (composerNoticeTimerRef.current) clearTimeout(composerNoticeTimerRef.current);
+    },
+    []
+  );
+
+  const showComposerNotice = (notice: H5ComposerNotice, autoDismissMs = 3200) => {
+    setComposerNotice(notice);
+    if (composerNoticeTimerRef.current) clearTimeout(composerNoticeTimerRef.current);
+    if (autoDismissMs > 0) {
+      composerNoticeTimerRef.current = setTimeout(() => {
+        setComposerNotice(null);
+        composerNoticeTimerRef.current = null;
+      }, autoDismissMs);
+    }
+  };
+
+  const handleTranslateDraft = async () => {
+    if (isInternalNote) {
+      showComposerNotice({ type: 'info', message: '内部备注无需翻译，请切换为回复买家' });
+      return;
+    }
+    const draft = replyText.trim();
+    if (!draft) {
+      showComposerNotice({ type: 'info', message: '请先输入要翻译的内容' });
+      return;
+    }
+    if (isTranslatingDraft) return;
+    if (!intellideskConfigured()) {
+      showComposerNotice({ type: 'error', message: '未连接服务，无法翻译' }, 5000);
+      setGlobalApiError('未连接服务，无法翻译草稿');
+      return;
+    }
+
+    const targetLang =
+      ticket.channelPlatformLanguage?.trim() || getPlatformLanguageLabel();
+
+    setIsTranslatingDraft(true);
+    setGlobalApiError(null);
+    dismissComposerNotice();
+    const startedAt = Date.now();
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+
+    try {
+      const { translated } = await postAiTranslate(
+        intellideskTenantId(),
+        intellideskUserIdForApi(user?.id),
+        { text: draft, targetLang }
+      );
+      const next = translated?.trim() ?? '';
+      if (!next) {
+        showComposerNotice({ type: 'error', message: '翻译结果为空，请稍后重试' }, 5000);
+        return;
+      }
+      if (next === draft) {
+        showComposerNotice({ type: 'info', message: `译文与原文相同（${targetLang}）` });
+        return;
+      }
+      setReplyText(next);
+      showComposerNotice({ type: 'success', message: `已译为${targetLang}` });
+    } catch (error) {
+      console.error('Failed to translate draft:', error);
+      const msg = formatAiUserVisibleError(error);
+      showComposerNotice({ type: 'error', message: msg }, 6000);
+      setGlobalApiError(`[翻译内容] ${msg}`);
+    } finally {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < 320) {
+        await new Promise<void>((r) => setTimeout(r, 320 - elapsed));
+      }
+      setIsTranslatingDraft(false);
+    }
+  };
+
+  const handleComposerPickFiles = (files: FileList) => {
+    const names = Array.from(files)
+      .map((f) => f.name)
+      .filter(Boolean);
+    if (names.length === 0) return;
+    const line = `[附件: ${names.join('、')}]`;
+    setReplyText((prev) => (prev.trim() ? `${prev.trim()}\n${line}` : line));
+  };
+
+  const runPolishWithPreset = async (preset: AiPolishPreset) => {
     if (isPolishing || !replyText.trim()) return;
 
-    setAiPolishTone(tone);
-    setPolishingTone(tone);
+    setPolishingPresetId(preset.id);
     setIsPolishing(true);
     setGlobalApiError(null);
     try {
       const polished = await generateReplyPolish(replyText, ticket, messages, order, user?.id, {
-        tone,
-        style: 'auto',
+        promptBlock: preset.prompt,
       });
       if (polished) {
         setReplyText(polished);
         setIsAiGenerated(true);
+        setShowPolishSheet(false);
         setShowAiPolishPopover(false);
       }
     } catch (error) {
@@ -889,7 +977,7 @@ export default function H5TicketDetail({
       setGlobalApiError(`[AI 润色] ${formatAiUserVisibleError(error)}`);
     } finally {
       setIsPolishing(false);
-      setPolishingTone(null);
+      setPolishingPresetId(null);
     }
   };
 
@@ -953,8 +1041,7 @@ export default function H5TicketDetail({
 
     if (onSendMessage) {
       const translateToPlatform =
-        !isInternalNote &&
-        translationSettings.outboundTranslateOnSend;
+        !isInternalNote && translationSettings.outboundTranslateOnSend;
       onSendMessage({
         content: text,
         recipients,
@@ -968,7 +1055,13 @@ export default function H5TicketDetail({
 
     setReplyText('');
     setIsAiGenerated(false);
-    setIsReplyExpanded(false);
+  };
+
+  const handleAddInternalNote = () => {
+    setActiveTab('chat');
+    setIsInternalNote(true);
+    setIsInternalNotesOpen(true);
+    setComposerFocusTrigger((n) => n + 1);
   };
 
   const outboundRecipientReady = isInternalNote || sendToCustomer || sendToManager;
@@ -992,18 +1085,151 @@ export default function H5TicketDetail({
     return '英语';
   };
 
+  const renderTabBottomBar = () => {
+    if (activeTab === 'chat') return null;
+
+    switch (activeTab) {
+      case 'ai-insight':
+        return (
+          <H5TabBottomBar>
+            {ticketInsightLoading && !ticketAiSummary ? (
+              <button type="button" disabled className={H5_TAB_BTN_SECONDARY}>
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                正在分析…
+              </button>
+            ) : !ticketAiSummary ? (
+              <button
+                type="button"
+                className={H5_TAB_BTN_SECONDARY}
+                onClick={() => void handleTicketInsight()}
+                disabled={ticketInsightLoading}
+              >
+                开始分析
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void handleAiSuggest()}
+              disabled={isGeneratingDraft || (ticketInsightLoading && !ticketAiSummary)}
+              className={H5_TAB_BTN_PRIMARY}
+              title="基于知识库自动生成回复草稿"
+            >
+              {isGeneratingDraft ? (
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4 shrink-0" />
+              )}
+              生成智能回复
+            </button>
+          </H5TabBottomBar>
+        );
+
+      case 'order':
+        return (
+          <H5TabBottomBar>
+            <button
+              type="button"
+              onClick={handleAddInternalNote}
+              className={H5_TAB_BTN_SECONDARY}
+            >
+              <Pencil className="h-4 w-4 shrink-0" />
+              添加备注
+            </button>
+          </H5TabBottomBar>
+        );
+
+      case 'logistics':
+        if (!order || (!order.trackingNumber?.trim() && order.logisticsStatus == null)) return null;
+        return (
+          <H5TabBottomBar>
+            <button
+              type="button"
+              onClick={() => void handleSyncLogistics(true)}
+              disabled={isSyncingLogistics}
+              className={H5_TAB_BTN_PRIMARY}
+            >
+              <RefreshCw className={cn('h-4 w-4 shrink-0', isSyncingLogistics && 'animate-spin')} />
+              {isSyncingLogistics ? '同步中…' : '同步 17track 物流轨迹'}
+            </button>
+          </H5TabBottomBar>
+        );
+
+      case 'invoice':
+        if (!order?.hasVatInfo) {
+          return (
+            <H5TabBottomBar>
+              <a
+                href="https://tiaojia.nezhachuhai.com/tools/vat/shop"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={H5_TAB_BTN_ACCENT}
+              >
+                去维护主体信息
+              </a>
+            </H5TabBottomBar>
+          );
+        }
+        if (!order.storeEntity) {
+          return (
+            <H5TabBottomBar>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className={H5_TAB_BTN_SECONDARY}
+              >
+                <RotateCcw className="h-4 w-4 shrink-0" />
+                强制刷新同步
+              </button>
+            </H5TabBottomBar>
+          );
+        }
+        return (
+          <H5TabBottomBar>
+            <button
+              type="button"
+              onClick={() => setIsPreviewModalOpen(true)}
+              className={H5_TAB_BTN_ACCENT}
+            >
+              <FileText className="h-4 w-4 shrink-0" />
+              生成并预览发票
+            </button>
+          </H5TabBottomBar>
+        );
+
+      case 'after-sales':
+        return (
+          <H5TabBottomBar>
+            <button
+              type="button"
+              onClick={() => setIsAfterSalesModalOpen(true)}
+              className={H5_TAB_BTN_ACCENT}
+            >
+              {afterSalesRecords.length > 0 ? (
+                <>
+                  <Plus className="h-4 w-4 shrink-0" />
+                  再次提交售后
+                </>
+              ) : (
+                '提交售后申请'
+              )}
+            </button>
+          </H5TabBottomBar>
+        );
+
+      default:
+        return null;
+    }
+  };
+
   const renderBusinessSidebarContent = () => {
     // 根据 H5 要求，这里去掉侧边栏概念，直接用 activeTab 切换「会话」或其它面板内容
     if (activeTab === 'chat') return null; // 会话在主体区显示
     return (
-    <div className={cn(
-      'flex min-h-0 flex-col overflow-y-auto bg-slate-50',
-      'w-full h-full pb-4'
-    )}>
-      <div className="flex-1 min-h-0 overflow-y-auto">
+    <div className="flex min-h-0 flex-1 flex-col bg-slate-50 w-full h-full">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {activeTab === 'ai-insight' && (
-          <div className="flex flex-col h-full overflow-hidden">
-            <section className="p-4 flex flex-col h-full overflow-hidden">
+          <div className="flex flex-col">
+            <section className="p-4">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-purple-500" />
@@ -1095,21 +1321,6 @@ export default function H5TicketDetail({
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => void handleAiSuggest()}
-                    disabled={isGeneratingDraft}
-                    className="flex min-h-11 w-full touch-manipulation items-center justify-center gap-2 rounded-xl border border-purple-200 bg-purple-50 px-3 py-2.5 text-sm font-bold text-purple-800 shadow-sm transition-colors hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-50"
-                    title="基于知识库自动生成回复草稿"
-                  >
-                    {isGeneratingDraft ? (
-                      <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-4 w-4 shrink-0" />
-                    )}
-                    生成智能回复
-                  </button>
-
                   <div className="pt-4 border-t border-slate-100">
                     <p className="text-[10px] text-slate-400 text-center italic">
                       分析仅供参考，AI 识别可能存在误差。
@@ -1117,34 +1328,13 @@ export default function H5TicketDetail({
                   </div>
                 </div>
               ) : (
-                <div className="flex w-full max-w-sm flex-col items-stretch justify-center px-2 py-12 text-center">
+                <div className="flex flex-col items-center justify-center px-4 py-16 text-center">
                   <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-slate-50">
                     <Sparkles className="h-6 w-6 text-slate-300" />
                   </div>
-                  <p className="mb-4 text-xs leading-relaxed text-slate-500">
-                    点击按钮开始分析工单，AI 将自动识别客户意图、情绪并生成摘要。
+                  <p className="max-w-xs text-xs leading-relaxed text-slate-500">
+                    使用底部按钮开始分析工单，AI 将为您提炼核心诉求、推荐回复策略。
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => void handleTicketInsight()}
-                    className="min-h-11 w-full touch-manipulation rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50"
-                  >
-                    开始分析
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleAiSuggest()}
-                    disabled={isGeneratingDraft}
-                    className="mt-3 flex min-h-11 w-full touch-manipulation items-center justify-center gap-2 rounded-xl border border-purple-200 bg-purple-50 px-3 py-2.5 text-sm font-bold text-purple-800 shadow-sm transition-colors hover:bg-purple-100 disabled:cursor-not-allowed disabled:opacity-50"
-                    title="基于知识库自动生成回复草稿"
-                  >
-                    {isGeneratingDraft ? (
-                      <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-4 w-4 shrink-0" />
-                    )}
-                    生成智能回复
-                  </button>
                 </div>
               )}
             </section>
@@ -1312,15 +1502,6 @@ export default function H5TicketDetail({
                         </div>
                       </div>
                       
-                      <a 
-                        href={buildMainSystemOrderUrl(order)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="w-full py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs font-bold text-slate-700 transition-colors flex items-center justify-center gap-1 mt-4"
-                      >
-                        查看订单
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </a>
                     </>
                   ) : (
                     <div className="space-y-2">
@@ -1525,24 +1706,11 @@ export default function H5TicketDetail({
                          </div>
                        );
                      })()}
-                     <div className="flex flex-col items-end gap-1 shrink-0">
-                       <button
-                         onClick={() => handleSyncLogistics(true)}
-                         disabled={isSyncingLogistics}
-                         className={cn(
-                           "p-1.5 rounded-lg border border-slate-200 bg-white text-slate-500 hover:text-blue-600 hover:border-blue-200 hover:bg-blue-50 transition-all shadow-sm disabled:opacity-50",
-                           isSyncingLogistics && "animate-spin"
-                         )}
-                         title="同步 17track 物流轨迹"
-                       >
-                         <RefreshCw className={cn("w-3.5 h-3.5", isSyncingLogistics && "animate-spin")} />
-                       </button>
-                       {order.logisticsLastSyncedAt && (
-                         <span className="text-[9px] text-slate-400 font-medium">
-                           上次同步: {format(new Date(order.logisticsLastSyncedAt), 'HH:mm')}
-                         </span>
-                       )}
-                     </div>
+                     {order.logisticsLastSyncedAt && (
+                       <span className="text-[9px] text-slate-400 font-medium shrink-0">
+                         上次同步: {format(new Date(order.logisticsLastSyncedAt), 'HH:mm')}
+                       </span>
+                     )}
                    </div>
                   <div className="grid grid-cols-2 gap-4 pt-1">
                     <div className="space-y-0.5">
@@ -1621,7 +1789,7 @@ export default function H5TicketDetail({
                           <p className="text-[11px] text-slate-400 max-w-[220px] mx-auto leading-relaxed">
                             {order.logisticsStatus === LogisticsStatus.NOT_FOUND
                               ? '单号已提交查询，17track 抓取到信息后将自动同步。'
-                              : '请稍后点击上方刷新按钮同步，或前往承运商官网查询。'}
+                              : '请使用底部按钮同步物流轨迹，或前往承运商官网查询。'}
                           </p>
                         </div>
                       </div>
@@ -1658,14 +1826,6 @@ export default function H5TicketDetail({
                     当前店铺尚未在母系统中配置 VAT 税号或公司开票抬头，无法生成正式发票。
                   </p>
                 </div>
-                <a 
-                  href="https://tiaojia.nezhachuhai.com/tools/vat/shop"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-4 py-2 bg-white border border-slate-200 hover:border-[#F97316] hover:text-[#F97316] rounded-lg text-xs font-bold text-slate-600 transition-all shadow-sm"
-                >
-                  去维护主体信息
-                </a>
               </div>
             ) : !order.storeEntity ? (
               <div className="flex flex-col items-center justify-center h-64 text-center space-y-4 animate-in fade-in duration-300">
@@ -1678,16 +1838,9 @@ export default function H5TicketDetail({
                     已检测到 VAT 标识，但母系统尚未同步具体主体详情（公司名、地址等）。
                   </p>
                 </div>
-                <div className="flex flex-col gap-2 w-full px-8">
-                  <button 
-                    onClick={() => window.location.reload()}
-                    className="w-full py-2 bg-white border border-slate-200 hover:border-amber-500 hover:text-amber-600 rounded-lg text-xs font-bold text-slate-600 transition-all shadow-sm flex items-center justify-center gap-2"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    强制刷新同步
-                  </button>
-                  <p className="text-[9px] text-slate-400">若多次刷新无效，请联系系统管理员检查母系统 API。 </p>
-                </div>
+                <p className="text-[9px] text-slate-400 px-4">
+                  若多次刷新无效，请联系系统管理员检查母系统 API。
+                </p>
               </div>
             ) : (
               <div className="space-y-6 animate-in fade-in duration-300">
@@ -1716,13 +1869,6 @@ export default function H5TicketDetail({
                   )}
                 </div>
 
-                <button
-                  onClick={() => setIsPreviewModalOpen(true)}
-                  className="w-full py-3 bg-gradient-to-r from-[#F97316] to-[#FB923C] hover:from-orange-600 hover:to-orange-500 text-white rounded-xl text-sm font-bold shadow-lg shadow-orange-500/20 transition-all flex items-center justify-center gap-2 group active:scale-[0.98]"
-                >
-                  <FileText className="w-4 h-4 group-hover:rotate-6 transition-transform" />
-                  生成并预览发票
-                </button>
               </div>
             )}
           </div>
@@ -1730,19 +1876,10 @@ export default function H5TicketDetail({
 
         {activeTab === 'after-sales' && (
           <div className="flex flex-col min-h-full">
-            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+            <div className="p-4 border-b border-slate-100">
               <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
                 已登记售后 ({afterSalesRecords.length})
               </h4>
-              {afterSalesRecords.length > 0 && (
-                <button 
-                  onClick={() => setIsAfterSalesModalOpen(true)}
-                  className="text-[11px] font-bold text-[#F97316] hover:text-orange-600 flex items-center gap-1 transition-colors px-2 py-1 rounded-md hover:bg-orange-50"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  再次提交
-                </button>
-              )}
             </div>
 
             <div className="flex-1 p-4">
@@ -1838,21 +1975,16 @@ export default function H5TicketDetail({
                   <div className="space-y-1">
                     <p className="text-sm font-bold text-slate-900">暂无售后记录</p>
                     <p className="text-xs text-slate-400 max-w-[200px] leading-relaxed mx-auto">
-                      目前该订单尚未在系统中登记任何售后申请（退款、退货、补发等）。
+                      目前该订单尚未在系统中登记任何售后申请（退款、退货、补发等）。可使用底部按钮提交。
                     </p>
                   </div>
-                  <button 
-                    onClick={() => setIsAfterSalesModalOpen(true)}
-                    className="px-6 py-2.5 bg-[#F97316] hover:bg-orange-600 text-white rounded-xl text-xs font-bold shadow-lg shadow-orange-500/20 transition-all active:scale-[0.98]"
-                  >
-                    提交售后申请
-                  </button>
                 </div>
               )}
             </div>
           </div>
         )}
       </div>
+      {renderTabBottomBar()}
     </div>
     );
   };
@@ -1865,18 +1997,42 @@ export default function H5TicketDetail({
         <header className="border-b border-slate-200 bg-white shrink-0 px-3 py-2 z-20 relative">
           <div className="flex flex-col gap-1 min-w-0">
             <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className={cn("font-bold text-slate-900 truncate min-w-0", "text-sm")} title={getTicketSubjectForDisplay(ticket)}>
+              <div className="flex min-w-0 items-center gap-2">
+                <h2
+                  className={cn('min-w-0 flex-1 truncate font-bold text-slate-900', 'text-sm')}
+                  title={getTicketSubjectForDisplay(ticket)}
+                >
                   {getTicketSubjectForDisplay(ticket)}
                 </h2>
+                <div className="max-w-[min(14rem,50%)] shrink-0 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <TicketDetailStatusChips
+                    ticket={ticket}
+                    order={order}
+                    compact
+                    className="mt-0 w-max flex-nowrap gap-1"
+                    renderConversationAside={Boolean(onUpdateTicket)}
+                    onMessageProcessingStatusChange={
+                      onUpdateTicket
+                        ? (status) => onUpdateTicket({ messageProcessingStatus: status })
+                        : undefined
+                    }
+                    intentRefreshable={aiInsightRefreshable}
+                    intentRefreshLoading={intentClassifyLoading}
+                    onIntentRefresh={handleIntentRefresh}
+                    sentimentRefreshable={aiInsightRefreshable}
+                    sentimentRefreshLoading={sentimentClassifyLoading}
+                    onSentimentRefresh={handleSentimentRefresh}
+                  />
+                </div>
               </div>
 
-              {/* 移动端：顶部分段切换业务面板，避免与对话区挤在同一屏 */}
-              <div
-                className="mt-3 flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                role="tablist"
-                aria-label="工单业务分区"
-              >
+              {/* 业务分区：下划线 TAB */}
+              <div className={H5_DETAIL_TAB_BAR}>
+                <div
+                  className={H5_DETAIL_TAB_SCROLL}
+                  role="navigation"
+                  aria-label="工单业务分区"
+                >
                   {(
                     [
                       { id: 'chat' as const, label: '会话' },
@@ -1892,60 +2048,23 @@ export default function H5TicketDetail({
                       <button
                         key={t.id}
                         type="button"
-                        role="tab"
-                        aria-selected={active}
+                        id={`h5-ticket-tab-${t.id}`}
+                        aria-current={active ? 'page' : undefined}
+                        aria-label={active ? `${t.label}（当前）` : t.label}
                         onClick={() => {
                           setActiveTab(t.id);
                         }}
                         className={cn(
-                          'shrink-0 rounded-full border px-4 py-1.5 text-xs font-bold transition-colors active:scale-[0.98]',
-                          active
-                            ? 'border-orange-200 bg-orange-50 text-[#F97316] shadow-sm'
-                            : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100'
+                          H5_DETAIL_TAB_BTN,
+                          active ? H5_DETAIL_TAB_ACTIVE : H5_DETAIL_TAB_INACTIVE
                         )}
                       >
                         {t.label}
                       </button>
                     );
                   })}
+                </div>
               </div>
-
-              <p
-                className="mt-1.5 truncate text-[11px] text-slate-500 tabular-nums"
-                  title={[
-                    `工单 ${formatTicketReadableRef(ticket)}`,
-                    ticket.createdAt ? `创建 ${format(new Date(ticket.createdAt), 'yyyy-MM-dd HH:mm')}` : '',
-                    ticket.updatedAt ? `更新 ${format(new Date(ticket.updatedAt), 'yyyy-MM-dd HH:mm')}` : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                >
-                  工单 {formatTicketReadableRef(ticket)}
-                  {ticket.createdAt && (
-                    <span className="text-slate-400">
-                      {' · '}
-                      {format(new Date(ticket.createdAt), 'MM/dd HH:mm')}
-                    </span>
-                  )}
-                </p>
-
-              <TicketDetailStatusChips
-                ticket={ticket}
-                order={order}
-                compact={true}
-                renderConversationAside={Boolean(onUpdateTicket)}
-                onMessageProcessingStatusChange={
-                  onUpdateTicket
-                    ? (status) => onUpdateTicket({ messageProcessingStatus: status })
-                    : undefined
-                }
-                intentRefreshable={aiInsightRefreshable}
-                intentRefreshLoading={intentClassifyLoading}
-                onIntentRefresh={handleIntentRefresh}
-                sentimentRefreshable={aiInsightRefreshable}
-                sentimentRefreshLoading={sentimentClassifyLoading}
-                onSentimentRefresh={handleSentimentRefresh}
-              />
             </div>
           </div>
         </header>
@@ -2295,549 +2414,134 @@ export default function H5TicketDetail({
           <div ref={messagesEndRef} />
         </div>
         
-        {/* Reply Area */}
-        <div className={cn(
-          'flex shrink-0 flex-col border-t border-slate-200 bg-white relative z-20',
-          'gap-2 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'
-        )}>
-          <div className="flex flex-col gap-2 w-full min-w-0">
-            {isReplyExpanded && (
-              <>
-              <div
-                className="grid w-full shrink-0 grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1"
-                role="tablist"
-                aria-label="回复类型"
-              >
-                  <button 
-                    type="button"
-                    role="tab"
-                    aria-selected={!isInternalNote}
-                    onClick={() => setIsInternalNote(false)}
-                    className={cn(
-                      'min-h-11 rounded-lg text-sm font-semibold transition-all active:scale-[0.98]',
-                      !isInternalNote ? "bg-white text-blue-600 shadow-sm" : "text-slate-600 hover:text-slate-800"
-                    )}
-                  >
-                    回复买家
-                  </button>
-                  <button 
-                    type="button"
-                    role="tab"
-                    aria-selected={isInternalNote}
-                    onClick={() => setIsInternalNote(true)}
-                    className={cn(
-                      'min-h-11 rounded-lg text-sm font-semibold transition-all active:scale-[0.98]',
-                      isInternalNote ? "bg-white text-[#F97316] shadow-sm" : "text-slate-600 hover:text-slate-800"
-                    )}
-                  >
-                    内部备注
-                  </button>
-              </div>
-                
-                <div className="-mx-1 flex min-h-11 flex-nowrap items-center gap-2 overflow-x-auto px-1 pb-0.5 touch-pan-x [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-                  {!isInternalNote && (
-                    <div className="relative" ref={translationPopoverRef}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowTemplatePopover(false);
-                          setShowEmojiPicker(false);
-                          setShowAiPolishPopover(false);
-                          setShowTranslationPopover((v) => !v);
-                        }}
-                        className={cn(
-                          "inline-flex min-h-11 shrink-0 touch-manipulation items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors shadow-sm active:scale-[0.99]",
-                          showTranslationPopover ? "bg-slate-50 border-slate-300 text-slate-900" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-                        )}
-                        title="查看翻译配置"
-                      >
-                        <Languages className="h-4 w-4 text-slate-500 shrink-0" strokeWidth={2} />
-                        自动翻译
-                        <ChevronUp className={cn("w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform", showTranslationPopover && "rotate-180")} />
-                      </button>
+        <H5ComposerBar
+          replyText={replyText}
+          onReplyTextChange={setReplyText}
+          onSend={handleSend}
+          sendDisabled={!replyText.trim() || !outboundRecipientReady}
+          sendLabel={isInternalNote ? '保存备注' : '发送'}
+          isInternalNote={isInternalNote}
+          onExitInternalNote={() => setIsInternalNote(false)}
+          focusTrigger={composerFocusTrigger}
+          sendToCustomer={sendToCustomer}
+          sendToManager={sendToManager}
+          onSendToCustomerChange={setSendToCustomer}
+          onSendToManagerChange={setSendToManager}
+          onOpenTemplate={() => {
+            setShowAiPolishPopover(false);
+            setShowTemplatePopover(true);
+          }}
+          onAiAssist={() => void handleAiSuggest()}
+          aiAssistLoading={isGeneratingDraft}
+          onOpenPolish={() => setShowPolishSheet(true)}
+          polishDisabled={!replyText.trim() || isPolishing}
+          onTranslateDraft={() => void handleTranslateDraft()}
+          translateDisabled={isTranslatingDraft}
+          translateLoading={isTranslatingDraft}
+          composerNotice={composerNotice}
+          onDismissComposerNotice={dismissComposerNotice}
+          onPickFiles={handleComposerPickFiles}
+        />
 
-                      {showTranslationPopover && (
-                        <div className="absolute right-0 bottom-full mb-2 w-[min(20rem,calc(100vw-1rem))] max-h-[min(70vh,28rem)] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200 sm:w-[320px] sm:max-h-none">
-                          <div className="p-4 space-y-4">
-                            <div className="flex items-center justify-between">
-                              <div className="space-y-0.5">
-                                <p className="text-xs font-bold text-slate-900">我的语言与自动翻译</p>
-                                <p className="text-[10px] text-slate-400">将外语消息（含同步信息）译为 {getInboundTargetLangLabel(translationSettings.inboundTargetLang)}</p>
-                              </div>
-                              <div
-                                className={cn(
-                                  'relative h-5 w-9 shrink-0 rounded-full transition-colors',
-                                  translationSettings.inboundTranslateEnabled ? 'bg-[#F97316]/50' : 'bg-slate-200/50'
-                                )}
-                              >
-                                <span
-                                  className={cn(
-                                    'absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
-                                    translationSettings.inboundTranslateEnabled ? 'translate-x-4' : 'translate-x-0'
-                                  )}
-                                />
-                              </div>
-                            </div>
-
-                            <div className="flex items-center justify-between border-t border-slate-100 pt-3">
-                              <div className="space-y-0.5">
-                                <p className="text-xs font-bold text-slate-900">发送信息自动翻译</p>
-                                <p className="text-[10px] text-slate-400">发送前自动译为 {getPlatformLanguageLabel()}</p>
-                              </div>
-                              <div
-                                className={cn(
-                                  'relative h-5 w-9 shrink-0 rounded-full transition-colors',
-                                  translationSettings.outboundTranslateOnSend ? 'bg-[#F97316]/50' : 'bg-slate-200/50'
-                                )}
-                              >
-                                <span
-                                  className={cn(
-                                    'absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
-                                    translationSettings.outboundTranslateOnSend ? 'translate-x-4' : 'translate-x-0'
-                                  )}
-                                />
-                              </div>
-                            </div>
-
-                            <div className="bg-slate-50 border border-slate-100 p-2.5 rounded-lg flex items-start gap-2">
-                              <Info className="w-3.5 h-3.5 text-slate-400 mt-0.5 shrink-0" />
-                              <p className="text-[10px] text-slate-500 leading-relaxed">
-                                上述为系统当前状态，若需修改请前往
-                                <Link to="/settings/translation" className="text-blue-600 hover:text-blue-700 hover:underline mx-0.5 font-bold">系统设置</Link>
-                                。
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  <div className="relative" ref={templatePopoverRef}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowTranslationPopover(false);
-                        setShowEmojiPicker(false);
-                        setShowAiPolishPopover(false);
-                        setShowTemplatePopover((v) => !v);
-                      }}
-                      className={cn(
-                        "inline-flex min-h-11 shrink-0 touch-manipulation items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors shadow-sm active:scale-[0.99]",
-                        showTemplatePopover ? "bg-slate-50 border-slate-300 text-slate-900" : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
-                      )}
-                    >
-                      插入模板
-                      <ChevronUp className={cn("w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform", showTemplatePopover && "rotate-180")} />
-                    </button>
-
-                    {showTemplatePopover && (
-                      <div className="absolute right-0 bottom-full mb-2 w-[min(21.25rem,calc(100vw-1rem))] max-h-[min(70vh,24rem)] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200 sm:w-[340px] sm:max-h-none">
-                        <div className="p-3 border-b border-slate-100 bg-slate-50/50">
-                          <div className="relative">
-                            <input
-                              type="text"
-                              autoFocus
-                              placeholder="搜索模板名称、内容..."
-                              value={templateSearchQuery}
-                              onChange={(e) => setTemplateSearchQuery(e.target.value)}
-                              className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#F97316]/20 focus:border-[#F97316]"
-                            />
-                            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                          </div>
-                        </div>
-                        <div className="max-h-[280px] overflow-y-auto p-2 space-y-1">
-                          {pickerTemplatesForTicket
-                            .filter(
-                              (tpl) =>
-                                String(tpl.title ?? '')
-                                  .toLowerCase()
-                                  .includes(templateSearchQuery.toLowerCase()) ||
-                                String(tpl.content ?? '')
-                                  .toLowerCase()
-                                  .includes(templateSearchQuery.toLowerCase())
-                            )
-                            .sort((a, b) => {
-                              const intent = (ticket.intent ?? '').trim();
-                              const rowMatchesIntent = (row: ReplyTemplatePickerRow) => {
-                                if (!intent) return false;
-                                const rowCats =
-                                  row.categoryValues?.length > 0
-                                    ? row.categoryValues
-                                    : row.categoryValue
-                                    ? [row.categoryValue]
-                                    : [];
-                                return rowCats.some((c) =>
-                                  ticketIntentMatchesAfterSalesCategoryValue(intent, String(c).trim())
-                                );
-                              };
-                              const aMatch = rowMatchesIntent(a);
-                              const bMatch = rowMatchesIntent(b);
-                              if (aMatch && !bMatch) return -1;
-                              if (!aMatch && bMatch) return 1;
-                              return 0;
-                            })
-                            .map((tpl) => {
-                              const intent = (ticket.intent ?? '').trim();
-                              const cats = tpl.categoryValues?.length
-                                ? tpl.categoryValues
-                                : tpl.categoryValue
-                                ? [tpl.categoryValue]
-                                : [];
-                              const isRecommended =
-                                !!intent &&
-                                cats.some((c) =>
-                                  ticketIntentMatchesAfterSalesCategoryValue(intent, String(c).trim())
-                                );
-                              return (
-                                <button
-                                  key={tpl.id}
-                                  type="button"
-                                  onClick={() => {
-                                    const processedContent = replaceTemplatePlaceholders(tpl.content);
-                                    setReplyText(processedContent);
-                                    setIsAiGenerated(false);
-                                    setIsReplyExpanded(true);
-                                    setShowTemplatePopover(false);
-                                    setTemplateSearchQuery('');
-                                  }}
-                                  className={cn(
-                                    "w-full text-left p-2.5 rounded-lg transition-colors group relative",
-                                    isRecommended ? "bg-orange-50/50 hover:bg-orange-50 border border-orange-100/50" : "hover:bg-slate-50"
-                                  )}
-                                >
-                                  <div className="flex items-center justify-between mb-1">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className={cn(
-                                        "text-xs font-bold transition-colors",
-                                        isRecommended ? "text-orange-700" : "text-slate-900 group-hover:text-[#F97316]"
-                                      )}>
-                                        {tpl.title}
-                                      </span>
-                                      {isRecommended && (
-                                        <span className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-orange-100 text-[9px] font-bold text-orange-600 uppercase tracking-tight">
-                                          <Sparkles className="w-2 h-2" />
-                                          推荐
-                                        </span>
-                                      )}
-                                    </div>
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-medium">
-                                      {cats.length > 0
-                                        ? cats.map((v) => routingAfterSalesLabel(String(v))).join('、')
-                                        : tpl.category && tpl.category !== 'all'
-                                          ? tpl.category
-                                          : '通用'}
-                                    </span>
-                                  </div>
-                                  <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">
-                                    {tpl.content}
-                                  </p>
-                                </button>
-                              );
-                            })}
-                        </div>
-                        <div className="p-2.5 border-t border-slate-100 bg-slate-50/50 flex justify-center">
-                          <Link
-                            to="/settings/templates"
-                            className="text-[11px] font-medium text-blue-600 hover:text-blue-700 hover:underline inline-flex items-center gap-1"
-                          >
-                            管理模板库
-                            <ExternalLink className="w-3 h-3" />
-                          </Link>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {!isInternalNote && (
-                    <div className="relative shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setShowTranslationPopover(false);
-                          setShowTemplatePopover(false);
-                          setShowAiPolishPopover(false);
-                          setShowEmojiPicker(false);
-                          void handleAiSuggest();
-                        }}
-                        disabled={isGeneratingDraft}
-                        className={cn(
-                          'inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-sm font-bold shadow-sm transition-colors active:scale-[0.99] touch-manipulation',
-                          'border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100',
-                          isGeneratingDraft && 'cursor-not-allowed opacity-50'
-                        )}
-                        title="基于知识库自动生成回复草稿"
-                      >
-                        {isGeneratingDraft ? (
-                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                        ) : (
-                          <Sparkles className="h-4 w-4 shrink-0" />
-                        )}
-                        AI 回复
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="relative shrink-0" ref={aiPolishPopoverRef}>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowTranslationPopover(false);
-                        setShowTemplatePopover(false);
-                        setShowEmojiPicker(false);
-                        setShowAiPolishPopover((v) => !v);
-                      }}
-                      disabled={isPolishing || !replyText.trim()}
-                      className={cn(
-                        'inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-sm font-bold shadow-sm transition-colors active:scale-[0.99] touch-manipulation',
-                        showAiPolishPopover
-                          ? 'border-indigo-200 bg-indigo-100 text-indigo-900'
-                          : 'border-indigo-100 bg-indigo-50 text-indigo-700 hover:bg-indigo-100',
-                        (!replyText.trim() || isPolishing) && 'cursor-not-allowed opacity-50'
-                      )}
-                      title={
-                        !replyText.trim()
-                          ? '请先在输入框填写草稿，再点选语气一键润色'
-                          : '点开后直接选语气，一次点击即润色'
-                      }
-                    >
-                      {isPolishing ? (
-                        <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                      ) : (
-                        <Pencil className="h-4 w-4 shrink-0" />
-                      )}
-                      AI 润色
-                      <ChevronUp
-                        className={cn(
-                          'h-3.5 w-3.5 shrink-0 text-indigo-500/80 transition-transform',
-                          showAiPolishPopover && 'rotate-180'
-                        )}
-                      />
-                    </button>
-
-                    {showAiPolishPopover && (
-                      <div className="absolute right-0 bottom-full mb-2 max-h-[min(70vh,28rem)] w-[min(22rem,calc(100vw-1rem))] overflow-y-auto overflow-x-hidden rounded-xl border border-slate-200 bg-white shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-200 z-50 sm:max-h-none">
-                        <div className="p-2.5 border-b border-slate-100 bg-slate-50/50">
-                          <p className="text-xs font-bold text-slate-900">选择语气</p>
-                          <p className="text-[10px] text-slate-500 mt-0.5">点一项立即润色（风格固定为自动优化）</p>
-                        </div>
-                        <div className="p-2 max-h-[min(360px,50vh)] overflow-y-auto space-y-1">
-                          {AI_POLISH_TONE_OPTIONS.map((opt) => {
-                            const busy = isPolishing && polishingTone === opt.value;
-                            return (
-                              <button
-                                key={opt.value}
-                                type="button"
-                                onClick={() => {
-                                  void runPolishWithTone(opt.value);
-                                }}
-                                disabled={isPolishing || !replyText.trim()}
-                                className={cn(
-                                  'w-full text-left rounded-lg px-3 py-2 transition-colors border',
-                                  aiPolishTone === opt.value && !isPolishing
-                                    ? 'border-indigo-200 bg-indigo-50/80'
-                                    : 'border-transparent hover:bg-slate-50',
-                                  (isPolishing || !replyText.trim()) && 'opacity-60 cursor-not-allowed hover:bg-transparent'
-                                )}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-xs font-bold text-slate-900">{opt.label}</span>
-                                  {busy ? (
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600 shrink-0" />
-                                  ) : null}
-                                </div>
-                                <p className="text-[10px] text-slate-500 mt-0.5 leading-snug">{opt.hint}</p>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+        {showTemplatePopover ? (
+          <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-900/40" onClick={() => setShowTemplatePopover(false)}>
+            <div
+              className="max-h-[min(70vh,28rem)] overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+              ref={templatePopoverRef}
+            >
+              <div className="border-b border-slate-100 bg-slate-50/50 p-3">
+                <div className="relative">
+                  <input
+                    type="text"
+                    autoFocus
+                    placeholder="搜索模板名称、内容..."
+                    value={templateSearchQuery}
+                    onChange={(e) => setTemplateSearchQuery(e.target.value)}
+                    className="w-full rounded-md border border-slate-200 bg-white py-2 pl-8 pr-3 text-sm focus:border-[#F97316] focus:outline-none focus:ring-2 focus:ring-[#F97316]/20"
+                  />
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                 </div>
-              </>
-            )}
-
-            <div className="relative group w-full">
-              <textarea
-                placeholder={isInternalNote ? "在此输入仅内部可见的备注信息..." : "在此输入回复内容，Shift + Enter 换行"}
-                value={replyText}
-                onFocus={() => setIsReplyExpanded(true)}
-                onChange={(e) => {
-                  setReplyText(e.target.value);
-                  // 当输入框被完全清空时，才重置 AI 生成与引用状态
-                  if (!e.target.value) {
-                    setIsAiGenerated(false);
-                  }
-                  if (!isReplyExpanded && e.target.value) setIsReplyExpanded(true);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSend();
-                  }
-                }}
-                className={cn(
-                  'w-full resize-none rounded-xl border bg-slate-50/50 p-4 text-sm outline-none transition-all placeholder:text-slate-400',
-                  isReplyExpanded
-                    ? 'min-h-[72px] max-h-[28vh] overflow-y-auto'
-                    : 'min-h-[46px] py-2.5',
-                  isInternalNote 
-                    ? "border-orange-100 focus:bg-white focus:border-orange-200 focus:ring-4 focus:ring-orange-500/5" 
-                    : "border-slate-200 focus:bg-white focus:border-blue-200 focus:ring-4 focus:ring-blue-500/5"
-                )}
-              />
-              <div className={cn(
-                "absolute right-2 bottom-2 flex items-center gap-2 transition-opacity",
-                isReplyExpanded ? "opacity-100" : "opacity-0 pointer-events-none"
-              )}>
-                  <div className="relative" ref={emojiPopoverRef}>
-                    <button 
-                      type="button" 
-                      onClick={() => {
-                        setShowTranslationPopover(false);
-                        setShowTemplatePopover(false);
-                        setShowAiPolishPopover(false);
-                        setShowEmojiPicker((v) => !v);
-                      }}
-                      title="选择表情"
-                      className={cn(
-                        "inline-flex min-h-11 min-w-11 touch-manipulation items-center justify-center rounded-lg p-2 transition-colors",
-                        showEmojiPicker ? "bg-slate-100 text-slate-700" : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
-                      )}
-                    >
-                      <Smile className="w-4 h-4" />
-                    </button>
-                    
-                    {showEmojiPicker && (
-                      <div className="absolute right-0 bottom-full mb-2 w-[280px] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-bottom-2 duration-200">
-                        <div className="p-2 border-b border-slate-100 bg-slate-50/50">
-                          <p className="text-xs font-semibold text-slate-700 px-1">常用表情</p>
-                        </div>
-                        <div className="grid grid-cols-7 gap-1 h-[200px] overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-slate-200 scrollbar-track-transparent hover:scrollbar-thumb-slate-300">
-                          {COMMON_EMOJIS.map((emoji, index) => (
-                            <button
-                              key={index}
-                              type="button"
-                              onClick={() => {
-                                setReplyText(prev => prev + emoji);
-                              }}
-                              className="flex items-center justify-center h-8 hover:bg-slate-100 rounded-lg text-lg transition-colors cursor-pointer"
-                              title={emoji}
-                            >
-                              {emoji}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  <div className="relative">
-                    <input
-                      type="file"
-                      id="attachment-upload"
-                      className="hidden"
-                      multiple
-                      aria-label="上传附件"
-                      onChange={(e) => {
-                        if (e.target.files && e.target.files.length > 0) {
-                          alert(`已选择 ${e.target.files.length} 个文件：\n` + Array.from(e.target.files).map(f => f.name).join('\n') + '\n\n(前端演示，尚未对接后端上传)');
-                          // Reset the input so the same files can be selected again if needed
-                          e.target.value = '';
-                        }
-                      }}
-                    />
-                    <label 
-                      htmlFor="attachment-upload"
-                      className="inline-flex min-h-11 min-w-11 cursor-pointer touch-manipulation items-center justify-center rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-600"
-                      title="添加附件"
-                    >
-                      <Paperclip className="w-4 h-4" />
-                    </label>
-                  </div>
+              </div>
+              <div className="max-h-[min(50vh,20rem)] space-y-1 overflow-y-auto p-2">
+                {pickerTemplatesForTicket
+                  .filter(
+                    (tpl) =>
+                      String(tpl.title ?? '')
+                        .toLowerCase()
+                        .includes(templateSearchQuery.toLowerCase()) ||
+                      String(tpl.content ?? '')
+                        .toLowerCase()
+                        .includes(templateSearchQuery.toLowerCase())
+                  )
+                  .map((tpl) => {
+                    const intent = (ticket.intent ?? '').trim();
+                    const cats = tpl.categoryValues?.length
+                      ? tpl.categoryValues
+                      : tpl.categoryValue
+                        ? [tpl.categoryValue]
+                        : [];
+                    const isRecommended =
+                      !!intent &&
+                      cats.some((c) =>
+                        ticketIntentMatchesAfterSalesCategoryValue(intent, String(c).trim())
+                      );
+                    return (
+                      <button
+                        key={tpl.id}
+                        type="button"
+                        onClick={() => {
+                          setReplyText(replaceTemplatePlaceholders(tpl.content));
+                          setIsAiGenerated(false);
+                          setShowTemplatePopover(false);
+                          setTemplateSearchQuery('');
+                        }}
+                        className={cn(
+                          'w-full rounded-lg p-2.5 text-left transition-colors',
+                          isRecommended
+                            ? 'border border-orange-100/50 bg-orange-50/50'
+                            : 'hover:bg-slate-50'
+                        )}
+                      >
+                        <span className="text-xs font-bold text-slate-900">{tpl.title}</span>
+                        <p className="mt-1 line-clamp-2 text-[11px] text-slate-500">{tpl.content}</p>
+                      </button>
+                    );
+                  })}
+              </div>
+              <div className="flex justify-center border-t border-slate-100 bg-slate-50/50 p-2.5">
+                <Link
+                  to="/settings/templates"
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-600 hover:underline"
+                >
+                  管理模板库
+                  <ExternalLink className="h-3 w-3" />
+                </Link>
               </div>
             </div>
-
-            {isReplyExpanded && (
-                <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-top-1 duration-200 md:flex-row md:flex-wrap md:items-center md:justify-between md:gap-2">
-                  {!isInternalNote && (
-                    <div className="flex w-full min-w-0 flex-col gap-2 md:w-auto md:flex-row md:items-center">
-                        <span className="shrink-0 text-left text-xs font-medium text-slate-500 md:inline">发送至</span>
-                        <div className="flex w-full min-w-0 gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setSendToCustomer((v) => !v)}
-                            className={cn(
-                              'inline-flex min-h-11 flex-1 touch-manipulation items-center justify-center gap-1.5 rounded-xl border px-2 text-sm font-medium transition-all active:scale-[0.99]',
-                              sendToCustomer
-                                ? 'border-blue-200 bg-blue-50 text-blue-900'
-                                : 'border-dashed border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50'
-                            )}
-                          >
-                            <User className="h-4 w-4 shrink-0" />
-                            客户
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setSendToManager((v) => !v)}
-                            className={cn(
-                              'inline-flex min-h-11 flex-1 touch-manipulation items-center justify-center gap-1.5 rounded-xl border px-2 text-sm font-medium transition-all active:scale-[0.99]',
-                              sendToManager
-                                ? 'border-amber-200 bg-amber-50 text-amber-900'
-                                : 'border-dashed border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:bg-slate-50'
-                            )}
-                          >
-                            <ShieldCheck className="h-4 w-4 shrink-0" />
-                            <span className="hidden sm:inline">平台</span>经理
-                          </button>
-                        </div>
-                    </div>
-                  )}
-
-                <div className="flex w-full gap-2 md:ml-auto md:w-auto md:justify-end">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsReplyExpanded(false);
-                      setReplyText('');
-                    }}
-                    className="min-h-11 flex-1 touch-manipulation rounded-xl border border-transparent px-3 text-sm font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-700 md:flex-none md:border-slate-200 md:bg-white md:shadow-sm"
-                  >
-                    取消
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSend}
-                    disabled={!replyText.trim() || !outboundRecipientReady}
-                    title={
-                      !outboundRecipientReady && !isInternalNote
-                        ? '请至少选择客户或平台经理'
-                        : undefined
-                    }
-                    className={cn(
-                      'flex min-h-11 flex-[1.15] touch-manipulation items-center justify-center gap-2 rounded-xl px-4 text-sm font-bold text-white shadow-sm transition-all active:scale-[0.99] md:flex-none md:px-6',
-                      isInternalNote
-                        ? 'bg-[#F97316] hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-40'
-                        : 'bg-blue-600 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40'
-                    )}
-                  >
-                    {isInternalNote ? '保存备注' : '发送'}
-                    <Send className="h-4 w-4 shrink-0" />
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
-        </div>
-        </>
         ) : null}
+
+        <Drawer
+          isOpen={showPolishSheet}
+          onClose={() => setShowPolishSheet(false)}
+          title="AI 润色"
+          position="bottom"
+        >
+          <AiPolishPicker
+            variant="list"
+            disabled={!replyText.trim()}
+            isPolishing={isPolishing}
+            polishingPresetId={polishingPresetId}
+            onSelectPreset={(preset) => void runPolishWithPreset(preset)}
+            className="p-2 pb-6"
+          />
+        </Drawer>
+        </>
+        ) : (
+          renderBusinessSidebarContent()
+        )}
       </div>
-      
-      {/* Right Sidebar - Business Intelligence */}
-      {activeTab !== 'chat' && (
-        <div className="flex flex-col overflow-hidden bg-slate-50 absolute inset-x-0 bottom-0 top-0 z-10 pt-[100px]">
-          {renderBusinessSidebarContent()}
-        </div>
-      )}
       {/* Modals */}
       <InvoicePreviewModal 
         isOpen={isPreviewModalOpen}

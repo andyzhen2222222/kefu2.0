@@ -75,6 +75,6 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 Set-Location $root
 Write-Host ''
 Write-Host 'Done. Next:' -ForegroundColor Green
-Write-Host '  1) cd backend && npm run dev   (API port 4000)' -ForegroundColor White
-Write-Host '  2) npm run dev:api             (UI port 4001)' -ForegroundColor White
-Write-Host '  3) Browser http://localhost:4001/ dashboard Retry' -ForegroundColor White
+Write-Host '  1) cd backend && npm run dev   (API port 4001)' -ForegroundColor White
+Write-Host '  2) npm run dev:api             (PC UI port 4000)' -ForegroundColor White
+Write-Host '  3) Browser http://localhost:4000/ dashboard Retry' -ForegroundColor White

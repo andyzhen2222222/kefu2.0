@@ -387,6 +387,14 @@ router.patch('/:id', async (req: TenantRequest, res) => {
   if (body.data.status === TicketStatus.resolved && !existing.resolvedAt) {
     data.resolvedAt = new Date();
   }
+  if (
+    body.data.messageProcessingStatus === 'unreplied' ||
+    body.data.messageProcessingStatus === 'replied'
+  ) {
+    data.unreadCount = 0;
+  } else if (body.data.messageProcessingStatus === 'unread') {
+    data.unreadCount = Math.max(existing.unreadCount, 1);
+  }
 
   const ticket = await prisma.ticket.update({
     where: { id },
@@ -463,8 +471,13 @@ router.post('/:id/messages', async (req: TenantRequest, res) => {
     data: {
       updatedAt: new Date(),
       firstResponseAt: ticket.firstResponseAt ?? (agentOutbound ? new Date() : undefined),
-      ...(agentOutbound ? { messageProcessingStatus: 'replied' as const } : {}),
-      ...(customerInbound ? { messageProcessingStatus: 'unread' as const } : {}),
+      ...(agentOutbound ? { messageProcessingStatus: 'replied' as const, unreadCount: 0 } : {}),
+      ...(customerInbound
+        ? {
+            messageProcessingStatus: 'unread' as const,
+            unreadCount: { increment: 1 },
+          }
+        : {}),
     },
     include: { channel: true, customer: true, order: true },
   });

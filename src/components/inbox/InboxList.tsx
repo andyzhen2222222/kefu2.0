@@ -10,6 +10,14 @@ import {
   Plus,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Layers,
+  Store,
+  MessageCircle,
+  Clock,
+  X,
+  Pin,
 } from 'lucide-react';
 import { cn } from '@/src/lib/utils';
 import { Ticket, TicketStatus, Order, Customer, Sentiment } from '@/src/types';
@@ -18,7 +26,11 @@ import { zhCN } from 'date-fns/locale';
 import { InboxTicketStatusIcons } from '@/src/lib/ticketStatusUi';
 import { getTicketSubjectForDisplay } from '@/src/components/settings/TranslationSettingsPage';
 import { platformGroupLabelForTicket } from '@/src/lib/platformLabels';
-import { InboxListPlatformMark } from '@/src/components/inbox/InboxListPlatformMark';
+import { InboxListConversationAvatar } from '@/src/components/inbox/InboxListConversationAvatar';
+import { resolveTicketUnreadBadgeCount } from '@/src/lib/unreadBadge';
+import InboxFilterDropdown, { type InboxFilterOption } from '@/src/components/inbox/InboxFilterDropdown';
+import InboxListSwipeRow, { type InboxRowAction } from '@/src/components/inbox/InboxListSwipeRow';
+import { loadInboxPinnedIds, toggleInboxPinned } from '@/src/lib/inboxPinnedStore';
 import { useAuth } from '@/src/hooks/useAuth';
 import { useIsMobile } from '@/src/hooks/useIsMobile';
 import {
@@ -45,8 +57,21 @@ const ORDER_STATUS_LABEL: Record<string, string> = {
 };
 
 const INBOX_PREVIEW_MAX = 30;
-/** 左侧工单列表按店铺分页（模拟异步分页加载） */
-const INBOX_SHOP_PAGE_SIZE = 8;
+const INBOX_PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
+/** 移动端首屏条数 & 每次上拉追加条数 */
+const MOBILE_LIST_INITIAL = 20;
+const MOBILE_LIST_STEP = 20;
+
+function inboxVisiblePageIndices(current: number, totalPages: number, maxVisible = 5): number[] {
+  if (totalPages <= maxVisible) {
+    return Array.from({ length: totalPages }, (_, i) => i);
+  }
+  const half = Math.floor(maxVisible / 2);
+  let start = Math.max(0, current - half);
+  let end = Math.min(totalPages - 1, start + maxVisible - 1);
+  start = Math.max(0, end - maxVisible + 1);
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
 /** 下拉框「全部」用空字符串，表示不按平台/店铺收窄 */
 const ALL_PLATFORMS = '';
 const ALL_SHOPS = '';
@@ -78,7 +103,67 @@ function inboxListPreviewTitle(ticket: Ticket): string {
 }
 
 type ConversationStatusFilter = '' | 'unread' | 'unreplied' | 'replied';
-type SlaFilter = '' | 'overdue';
+type SlaFilter = '' | 'overdue' | 'not_overdue';
+
+function isTicketSlaOverdue(t: Ticket): boolean {
+  return (
+    t.status !== TicketStatus.RESOLVED &&
+    t.status !== TicketStatus.SPAM &&
+    new Date(t.slaDueAt).getTime() < Date.now()
+  );
+}
+
+function isTicketSlaTrackable(t: Ticket): boolean {
+  return t.status !== TicketStatus.RESOLVED && t.status !== TicketStatus.SPAM;
+}
+
+function isTicketUnread(t: Ticket): boolean {
+  return t.messageProcessingStatus === 'unread' || t.status === TicketStatus.NEW;
+}
+
+function buildInboxSwipeActions(
+  ticket: Ticket,
+  pinned: boolean,
+  onPin: () => void,
+  onPatch: (patch: Partial<Ticket>) => void
+): InboxRowAction[] {
+  const unread = isTicketUnread(ticket);
+  const replied = ticket.messageProcessingStatus === 'replied';
+
+  return [
+    {
+      key: 'pin',
+      label: pinned ? '取消置顶' : '置顶',
+      className: 'bg-blue-500',
+      onClick: onPin,
+    },
+    {
+      key: 'read',
+      label: unread ? '标为已读' : '标为未读',
+      className: 'bg-amber-500',
+      onClick: () => {
+        if (unread) {
+          const patch: Partial<Ticket> = {
+            messageProcessingStatus: 'unreplied',
+            unreadCount: 0,
+          };
+          if (ticket.status === TicketStatus.NEW) patch.status = TicketStatus.TODO;
+          onPatch(patch);
+        } else {
+          onPatch({ messageProcessingStatus: 'unread', unreadCount: 1 });
+        }
+      },
+    },
+    {
+      key: 'reply',
+      label: replied ? '标为未回复' : '标为已回复',
+      className: 'bg-orange-500',
+      onClick: () => {
+        onPatch({ messageProcessingStatus: replied ? 'unreplied' : 'replied' });
+      },
+    },
+  ];
+}
 
 interface InboxListProps {
   tickets: Ticket[];
@@ -103,6 +188,10 @@ interface InboxListProps {
   onReloadList?: () => void;
   /** 点击列表进入详情的路径前缀，默认 `/mailbox`；H5 传 `/ticket` */
   ticketDetailPathPrefix?: string;
+  /** 移动端列表加载方式：`infinite` 上拉加载更多；默认随视口宽度判断 */
+  listPaginationMode?: 'auto' | 'infinite' | 'pages';
+  /** 左滑/快捷操作：更新工单字段（未读、已回复、置顶等） */
+  onTicketPatch?: (ticketId: string, patch: Partial<Ticket>) => void;
 }
 
 export default function InboxList({
@@ -120,10 +209,15 @@ export default function InboxList({
   listSearchServerBacked = false,
   listReloading = false,
   onReloadList,
+  listPaginationMode = 'auto',
+  onTicketPatch,
 }: InboxListProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const isMobile = useIsMobile();
+  const viewportMobile = useIsMobile();
+  const useInfiniteList =
+    listPaginationMode === 'infinite' ||
+    (listPaginationMode === 'auto' && viewportMobile);
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const searchControlled = typeof onListSearchQueryChange === 'function';
   const searchQuery = searchControlled ? (listSearchQueryProp ?? '') : localSearchQuery;
@@ -142,7 +236,20 @@ export default function InboxList({
   const [selectedPlatform, setSelectedPlatform] = useState<string>(ALL_PLATFORMS);
   const [selectedShop, setSelectedShop] = useState<string>(ALL_SHOPS);
   const [shopTicketsPage, setShopTicketsPage] = useState(0);
+  const [shopPageSize, setShopPageSize] = useState<number>(20);
   const [shopListLoading, setShopListLoading] = useState(false);
+  /** 移动端：已渲染条数（上拉加载更多，非页码翻页） */
+  const [mobileListLimit, setMobileListLimit] = useState(MOBILE_LIST_INITIAL);
+  const listScrollRef = useRef<HTMLDivElement>(null);
+  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [openScopeFilter, setOpenScopeFilter] = useState<
+    'platform' | 'shop' | 'status' | 'sla' | null
+  >(null);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => loadInboxPinnedIds());
+  const [openSwipeId, setOpenSwipeId] = useState<string | null>(null);
+  const pinnedKey = useMemo(() => [...pinnedIds].sort().join(','), [pinnedIds]);
 
   const allPlatformKeys = useMemo(() => uniquePlatformKeysFromTickets(tickets), [tickets]);
 
@@ -248,17 +355,17 @@ export default function InboxList({
       result = result.filter((t) => t.messageProcessingStatus === 'replied');
     }
     if (filterSla === 'overdue') {
-      result = result.filter(
-        (t) =>
-          t.status !== TicketStatus.RESOLVED &&
-          t.status !== TicketStatus.SPAM &&
-          new Date(t.slaDueAt).getTime() < Date.now()
-      );
+      result = result.filter(isTicketSlaOverdue);
+    } else if (filterSla === 'not_overdue') {
+      result = result.filter((t) => isTicketSlaTrackable(t) && !isTicketSlaOverdue(t));
     }
 
-    // Sort according to PRD: unread (1) > unreplied (2) > replied (3)
+    // Sort: 置顶优先，再按会话状态与时间
     result.sort((a, b) => {
-      // 1. Status priority: 未读 (unread) > 未回复 (unreplied) > 已回复 (replied)
+      const pinA = pinnedIds.has(a.id) ? 0 : 1;
+      const pinB = pinnedIds.has(b.id) ? 0 : 1;
+      if (pinA !== pinB) return pinA - pinB;
+
       const statusWeight: Record<string, number> = { unread: 1, unreplied: 2, replied: 3 };
       const weightA = statusWeight[a.messageProcessingStatus] || 99;
       const weightB = statusWeight[b.messageProcessingStatus] || 99;
@@ -279,7 +386,7 @@ export default function InboxList({
     });
 
     setDisplayTickets(result);
-  }, [majorDepsKey, tickets.length]); // Re-sort on major deps OR when a ticket is added/removed
+  }, [majorDepsKey, tickets.length, pinnedKey, pinnedIds]); // Re-sort on major deps OR when a ticket is added/removed
 
   // 2. Minor Update Logic: Keep the current order but update the ticket content
   useEffect(() => {
@@ -358,6 +465,95 @@ export default function InboxList({
 
   const allShopsScopeCount = ticketsBeforeShopFilter.length;
 
+  const platformFilterOptions = useMemo((): InboxFilterOption[] => {
+    const all: InboxFilterOption = {
+      id: ALL_PLATFORMS,
+      label: '全部平台',
+      count: displayTickets.length,
+    };
+    const rest = allPlatformKeys.map((p) => ({
+      id: p,
+      label: p,
+      count: platformTicketCounts[p] ?? 0,
+    }));
+    return [all, ...rest];
+  }, [allPlatformKeys, displayTickets.length, platformTicketCounts]);
+
+  const shopFilterOptions = useMemo((): InboxFilterOption[] => {
+    const all: InboxFilterOption = {
+      id: ALL_SHOPS,
+      label: '全部店铺',
+      count: allShopsScopeCount,
+    };
+    const rest = sortedShopsForPlatform.map((shop) => ({
+      id: shop,
+      label: shop,
+      count: shopTicketCounts[shop] ?? 0,
+    }));
+    return [all, ...rest];
+  }, [sortedShopsForPlatform, allShopsScopeCount, shopTicketCounts]);
+
+  const platformTriggerLabel =
+    selectedPlatform === ALL_PLATFORMS ? '全部平台' : selectedPlatform;
+  const shopTriggerLabel = selectedShop === ALL_SHOPS ? '全部店铺' : selectedShop;
+
+  /** 移动端筛选项计数：仅搜索，不含会话/SLA（各选项独立计数） */
+  const ticketsForFilterCounts = useMemo(() => {
+    let result = [...tickets];
+    if (searchQuery.trim() && !listSearchServerBacked) {
+      const query = searchQuery.trim().toLowerCase();
+      result = result.filter((t) => {
+        const shown = getTicketSubjectForDisplay(t);
+        const buyerName = customers[t.customerId]?.name ?? '';
+        const platformOrderId = t.orderId ? orders[t.orderId]?.platformOrderId : '';
+        const preview = (t.lastInboundPreview ?? '').toLowerCase();
+        return (
+          shown.toLowerCase().includes(query) ||
+          preview.includes(query) ||
+          t.subject.toLowerCase().includes(query) ||
+          (t.subjectOriginal?.toLowerCase().includes(query) ?? false) ||
+          t.channelId.toLowerCase().includes(query) ||
+          (t.orderId?.toLowerCase().includes(query) ?? false) ||
+          platformOrderId?.toLowerCase().includes(query) ||
+          buyerName.toLowerCase().includes(query)
+        );
+      });
+    }
+    return result;
+  }, [tickets, searchQuery, listSearchServerBacked, customers, orders]);
+
+  const conversationFilterOptions = useMemo((): InboxFilterOption[] => {
+    const unread = ticketsForFilterCounts.filter((t) => t.messageProcessingStatus === 'unread').length;
+    const unreplied = ticketsForFilterCounts.filter(
+      (t) => t.messageProcessingStatus === 'unreplied'
+    ).length;
+    const replied = ticketsForFilterCounts.filter((t) => t.messageProcessingStatus === 'replied').length;
+    return [
+      { id: '', label: '全部会话', count: ticketsForFilterCounts.length },
+      { id: 'unread', label: '未读消息', count: unread },
+      { id: 'unreplied', label: '待回复', count: unreplied },
+      { id: 'replied', label: '已回复', count: replied },
+    ];
+  }, [ticketsForFilterCounts]);
+
+  const slaFilterOptions = useMemo((): InboxFilterOption[] => {
+    const trackable = ticketsForFilterCounts.filter(isTicketSlaTrackable);
+    const overdue = trackable.filter(isTicketSlaOverdue).length;
+    const notOverdue = trackable.length - overdue;
+    return [
+      { id: '', label: '全部', count: ticketsForFilterCounts.length },
+      { id: 'overdue', label: '已超时', count: overdue },
+      { id: 'not_overdue', label: '未超时', count: notOverdue },
+    ];
+  }, [ticketsForFilterCounts]);
+
+  const statusActiveHint =
+    filterConversationStatus === ''
+      ? undefined
+      : conversationFilterOptions.find((o) => o.id === filterConversationStatus)?.label;
+  const slaActiveHint =
+    filterSla === '' ? undefined : slaFilterOptions.find((o) => o.id === filterSla)?.label;
+
   useLayoutEffect(() => {
     if (allPlatformKeys.length === 0) {
       setSelectedPlatform(ALL_PLATFORMS);
@@ -410,12 +606,60 @@ export default function InboxList({
     });
   }, [displayTickets, selectedPlatform, selectedShop]);
 
-  const shopTotalPages = Math.max(1, Math.ceil(ticketsForSelectedShop.length / INBOX_SHOP_PAGE_SIZE));
+  const shopTotalPages = Math.max(1, Math.ceil(ticketsForSelectedShop.length / shopPageSize));
   const safeShopPage = Math.min(shopTicketsPage, shopTotalPages - 1);
   const pagedShopTickets = useMemo(() => {
-    const start = safeShopPage * INBOX_SHOP_PAGE_SIZE;
-    return ticketsForSelectedShop.slice(start, start + INBOX_SHOP_PAGE_SIZE);
-  }, [ticketsForSelectedShop, safeShopPage]);
+    if (useInfiniteList) {
+      return ticketsForSelectedShop.slice(0, mobileListLimit);
+    }
+    const start = safeShopPage * shopPageSize;
+    return ticketsForSelectedShop.slice(start, start + shopPageSize);
+  }, [useInfiniteList, ticketsForSelectedShop, mobileListLimit, safeShopPage, shopPageSize]);
+
+  const mobileHasMore = useInfiniteList && mobileListLimit < ticketsForSelectedShop.length;
+
+  useEffect(() => {
+    if (!useInfiniteList) return;
+    setMobileListLimit(MOBILE_LIST_INITIAL);
+  }, [useInfiniteList, selectedShop, selectedPlatform, majorDepsKey]);
+
+  useEffect(() => {
+    if (!useInfiniteList || !mobileSearchOpen) return;
+    const id = requestAnimationFrame(() => searchInputRef.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, [useInfiniteList, mobileSearchOpen]);
+
+  useEffect(() => {
+    if (!useInfiniteList) return;
+    const root = listScrollRef.current;
+    if (!root) return;
+    const onScroll = () => setOpenSwipeId(null);
+    root.addEventListener('scroll', onScroll, { passive: true });
+    return () => root.removeEventListener('scroll', onScroll);
+  }, [useInfiniteList]);
+
+  useEffect(() => {
+    if (!useInfiniteList || !mobileHasMore) return;
+    const root = listScrollRef.current;
+    const sentinel = loadMoreSentinelRef.current;
+    if (!root || !sentinel) return;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        setMobileListLimit((prev) =>
+          Math.min(prev + MOBILE_LIST_STEP, ticketsForSelectedShop.length)
+        );
+      },
+      { root, rootMargin: '120px', threshold: 0 }
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [useInfiniteList, mobileHasMore, ticketsForSelectedShop.length, mobileListLimit]);
+  const visiblePageIndices = useMemo(
+    () => inboxVisiblePageIndices(safeShopPage, shopTotalPages),
+    [safeShopPage, shopTotalPages]
+  );
 
   useEffect(() => {
     setShopTicketsPage((p) => Math.min(p, Math.max(0, shopTotalPages - 1)));
@@ -470,9 +714,50 @@ export default function InboxList({
     )}>
       {/* Header & Search */}
       <div className="p-4 border-b border-slate-200/90 space-y-2.5">
+        {useInfiniteList && mobileSearchOpen ? (
+          <div className="relative animate-in fade-in slide-in-from-top-1 duration-200">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+            <input
+              ref={searchInputRef}
+              type="search"
+              enterKeyHint="search"
+              placeholder="搜索平台订单号、主题、买家…"
+              className="w-full pl-9 pr-9 py-2 bg-slate-50/90 border border-slate-200/90 focus:bg-white focus:border-slate-300 focus:ring-1 focus:ring-slate-200 rounded-lg text-[13px] text-slate-700 placeholder:text-slate-400 transition-all outline-none"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <button
+              type="button"
+              title="关闭搜索"
+              aria-label="关闭搜索"
+              onClick={() => setMobileSearchOpen(false)}
+              className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 active:bg-slate-100"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ) : null}
+
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-slate-800 tracking-tight shrink-0">工单</h2>
           <div className="flex items-center gap-1 shrink-0">
+            {useInfiniteList ? (
+              <button
+                type="button"
+                title={mobileSearchOpen ? '收起搜索' : '搜索'}
+                aria-label={mobileSearchOpen ? '收起搜索' : '搜索'}
+                aria-expanded={mobileSearchOpen}
+                onClick={() => setMobileSearchOpen((open) => !open)}
+                className={cn(
+                  'p-2 rounded-lg transition-colors',
+                  mobileSearchOpen || searchQuery.trim()
+                    ? 'bg-orange-50 text-[#F97316]'
+                    : 'text-slate-500 hover:bg-slate-100 active:bg-slate-100'
+                )}
+              >
+                <Search className="w-4 h-4" />
+              </button>
+            ) : null}
             <button
               type="button"
               title="手动新建工单"
@@ -522,35 +807,41 @@ export default function InboxList({
                 </button>
               </div>
             </div>
-            <button 
-              onClick={() => setShowFilters(!showFilters)}
-              title={showFilters ? "收起筛选" : "展开筛选"}
-              className={cn(
-                "p-2 rounded-lg transition-colors",
-                showFilters ? "bg-orange-50 text-[#F97316]" : "text-slate-500 hover:bg-slate-100"
-              )}
-            >
-              <Filter className="w-4 h-4" />
-            </button>
+            {!useInfiniteList ? (
+              <button
+                type="button"
+                onClick={() => setShowFilters(!showFilters)}
+                title={showFilters ? '收起筛选' : '展开筛选'}
+                className={cn(
+                  'p-2 rounded-lg transition-colors',
+                  showFilters ? 'bg-orange-50 text-[#F97316]' : 'text-slate-500 hover:bg-slate-100'
+                )}
+              >
+                <Filter className="w-4 h-4" />
+              </button>
+            ) : null}
           </div>
         </div>
         {inboxSyncHint ? (
           <p className="text-[11px] leading-snug text-slate-500">{inboxSyncHint}</p>
         ) : null}
 
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input
-            type="text"
-            placeholder="搜索平台订单号、主题、买家…"
-            className="w-full pl-9 pr-3 py-2 bg-slate-50/90 border border-slate-200/90 focus:bg-white focus:border-slate-300 focus:ring-1 focus:ring-slate-200 rounded-lg text-[13px] text-slate-700 placeholder:text-slate-400 transition-all outline-none"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
+        {!useInfiniteList ? (
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder="搜索平台订单号、主题、买家…"
+              className="w-full pl-9 pr-3 py-2 bg-slate-50/90 border border-slate-200/90 focus:bg-white focus:border-slate-300 focus:ring-1 focus:ring-slate-200 rounded-lg text-[13px] text-slate-700 placeholder:text-slate-400 transition-all outline-none"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+        ) : null}
 
-        {/* 7-Dimension Advanced Filters (Collapsible) */}
-        {showFilters && (
+        {/* PC：高级筛选（移动端仅保留平台/店铺/状态/超时四宫格） */}
+        {showFilters && !useInfiniteList && (
           <div className="pt-2 space-y-2 animate-in slide-in-from-top-2 duration-200">
             <div className="grid grid-cols-2 gap-2">
               <select
@@ -622,8 +913,9 @@ export default function InboxList({
                 title="选择 SLA 状态"
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-[#F97316]"
               >
-                <option value="">全部 SLA</option>
-                <option value="overdue">SLA 已超时</option>
+                <option value="">全部</option>
+                <option value="overdue">已超时</option>
+                <option value="not_overdue">未超时</option>
               </select>
             </div>
             <div className="flex justify-end pt-1">
@@ -652,6 +944,78 @@ export default function InboxList({
         ) : (
           <div className="flex flex-col flex-1 min-h-0">
             <div className="shrink-0 border-b border-slate-200/80 bg-white px-3 py-2">
+              {useInfiniteList ? (
+                <div className="flex items-center gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <InboxFilterDropdown
+                    ariaLabel="选择平台"
+                    shortLabel="平台"
+                    icon={Layers}
+                    activeHint={
+                      selectedPlatform === ALL_PLATFORMS ? undefined : platformTriggerLabel
+                    }
+                    isActive={selectedPlatform !== ALL_PLATFORMS}
+                    options={platformFilterOptions}
+                    selectedId={selectedPlatform}
+                    onSelect={(id) => {
+                      setSelectedPlatform(id);
+                      setSelectedShop(ALL_SHOPS);
+                    }}
+                    isOpen={openScopeFilter === 'platform'}
+                    onOpenChange={(open) =>
+                      setOpenScopeFilter((prev) => (open ? 'platform' : prev === 'platform' ? null : prev))
+                    }
+                  />
+                  <InboxFilterDropdown
+                    ariaLabel="选择店铺"
+                    shortLabel="店铺"
+                    icon={Store}
+                    activeHint={
+                      sortedShopsForPlatform.length === 0 || selectedShop === ALL_SHOPS
+                        ? undefined
+                        : shopTriggerLabel
+                    }
+                    isActive={selectedShop !== ALL_SHOPS && sortedShopsForPlatform.length > 0}
+                    options={shopFilterOptions}
+                    selectedId={selectedShop}
+                    onSelect={setSelectedShop}
+                    isOpen={openScopeFilter === 'shop'}
+                    onOpenChange={(open) =>
+                      setOpenScopeFilter((prev) => (open ? 'shop' : prev === 'shop' ? null : prev))
+                    }
+                    disabled={sortedShopsForPlatform.length === 0}
+                  />
+                  <InboxFilterDropdown
+                    ariaLabel="选择会话状态"
+                    shortLabel="状态"
+                    icon={MessageCircle}
+                    activeHint={statusActiveHint}
+                    isActive={filterConversationStatus !== ''}
+                    options={conversationFilterOptions}
+                    selectedId={filterConversationStatus}
+                    onSelect={(id) =>
+                      setFilterConversationStatus(id as ConversationStatusFilter)
+                    }
+                    isOpen={openScopeFilter === 'status'}
+                    onOpenChange={(open) =>
+                      setOpenScopeFilter((prev) => (open ? 'status' : prev === 'status' ? null : prev))
+                    }
+                  />
+                  <InboxFilterDropdown
+                    ariaLabel="选择 SLA"
+                    shortLabel="超时"
+                    icon={Clock}
+                    activeHint={slaActiveHint}
+                    isActive={filterSla !== ''}
+                    options={slaFilterOptions}
+                    selectedId={filterSla}
+                    onSelect={(id) => setFilterSla(id as SlaFilter)}
+                    isOpen={openScopeFilter === 'sla'}
+                    onOpenChange={(open) =>
+                      setOpenScopeFilter((prev) => (open ? 'sla' : prev === 'sla' ? null : prev))
+                    }
+                  />
+                </div>
+              ) : (
               <div className="flex min-w-0 items-center gap-1.5">
                 <label
                   htmlFor="inbox-list-platform"
@@ -736,10 +1100,11 @@ export default function InboxList({
                   )}
                 </button>
               </div>
+              )}
             </div>
 
             <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
-              <div className="relative flex-1 min-h-0 overflow-y-auto">
+              <div ref={listScrollRef} className="relative flex-1 min-h-0 overflow-y-auto">
                 {shopListLoading ? (
                   <div
                     className="pointer-events-none absolute inset-0 z-[1] flex flex-col items-center justify-center gap-2 bg-white/75 backdrop-blur-[1px]"
@@ -765,61 +1130,73 @@ export default function InboxList({
                         const buyerName = customers[ticket.customerId]?.name ?? '买家';
 
                         const isSelected = selectedTicketId === ticket.id;
-                        const showUnreadDot =
-                          ticket.messageProcessingStatus === 'unread' || ticket.status === TicketStatus.NEW;
-                        const platformMark = platformGroupLabelForTicket(
-                          ticket.platformType,
-                          ticket.channelId
+                        const unreadBadgeCount = resolveTicketUnreadBadgeCount(ticket);
+                        const showUnreadDot = unreadBadgeCount > 0;
+                        const isPinned = pinnedIds.has(ticket.id);
+                        const rowClassName = cn(
+                          'px-3 py-2.5 cursor-pointer transition-colors relative border-b border-slate-200/70 last:border-b-0',
+                          isSelected
+                            ? 'bg-slate-100/90 hover:bg-slate-100'
+                            : 'bg-white hover:bg-slate-50/90'
+                        );
+                        const goDetail = () => {
+                          if (openSwipeId === ticket.id) {
+                            setOpenSwipeId(null);
+                            return;
+                          }
+                          navigate(
+                            `${ticketDetailPathPrefix.replace(/\/$/, '')}/${ticket.id}${mailboxSearchSuffix}`
+                          );
+                        };
+                        const rowActions = buildInboxSwipeActions(
+                          ticket,
+                          isPinned,
+                          () => setPinnedIds(toggleInboxPinned(ticket.id)),
+                          (patch) => onTicketPatch?.(ticket.id, patch)
                         );
 
-                        return (
+                        const rowInner = (
                           <div
-                            key={ticket.id}
                             role="button"
                             tabIndex={0}
-                            onClick={() =>
-                              navigate(
-                                `${ticketDetailPathPrefix.replace(/\/$/, '')}/${ticket.id}${mailboxSearchSuffix}`
-                              )
-                            }
+                            onClick={goDetail}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault();
-                                navigate(
-                                  `${ticketDetailPathPrefix.replace(/\/$/, '')}/${ticket.id}${mailboxSearchSuffix}`
-                                );
+                                goDetail();
                               }
                             }}
                             onMouseEnter={() => onTicketHover?.(ticket.id)}
-                            className={cn(
-                              'px-3 py-2.5 cursor-pointer transition-colors relative border-b border-slate-200/70 last:border-b-0',
-                              isSelected
-                                ? 'bg-slate-100/90 hover:bg-slate-100'
-                                : 'bg-white hover:bg-slate-50/90'
-                            )}
+                            className={rowClassName}
                           >
                             {isSelected ? (
                               <div className="absolute left-0 top-2 bottom-2 w-px rounded-full bg-orange-400/90" />
                             ) : null}
 
-                            <div className={cn('min-w-0', isSelected ? 'pl-2.5' : 'pl-1')}>
+                            <div
+                              className={cn(
+                                'flex gap-2.5',
+                                isSelected ? 'pl-2.5' : 'pl-1'
+                              )}
+                            >
+                              <InboxListConversationAvatar
+                                buyerName={buyerName}
+                                unreadCount={unreadBadgeCount}
+                              />
+                              <div className="min-w-0 flex-1">
                               <div className="flex min-h-[15px] items-center justify-start gap-1.5">
-                                <span
-                                  className={cn(
-                                    'h-1 w-1 shrink-0 rounded-full',
-                                    showUnreadDot ? 'bg-rose-500/90' : 'bg-transparent'
-                                  )}
-                                  aria-hidden
-                                />
-                                <span className="pointer-events-none shrink-0" aria-hidden>
-                                  <InboxListPlatformMark platformLabel={platformMark} />
-                                </span>
                                 <span
                                   className="min-w-0 flex-1 truncate text-left text-xs font-bold text-slate-700"
                                   title={buyerName}
                                 >
                                   {buyerName}
                                 </span>
+                                {isPinned ? (
+                                  <Pin
+                                    className="h-3 w-3 shrink-0 text-blue-500"
+                                    aria-label="已置顶"
+                                  />
+                                ) : null}
                                 <span className="shrink-0 tabular-nums text-[11px] text-slate-500">
                                   {formatDistanceToNow(new Date(ticket.createdAt), {
                                     addSuffix: true,
@@ -848,55 +1225,149 @@ export default function InboxList({
                                   />
                                 </div>
                               ) : null}
+                              </div>
                             </div>
                           </div>
                         );
+
+                        return useInfiniteList ? (
+                          <InboxListSwipeRow
+                            key={ticket.id}
+                            open={openSwipeId === ticket.id}
+                            onOpenChange={(nextOpen) => {
+                              setOpenSwipeId(nextOpen ? ticket.id : null);
+                            }}
+                            actions={rowActions}
+                          >
+                            {rowInner}
+                          </InboxListSwipeRow>
+                        ) : (
+                          <div key={ticket.id}>{rowInner}</div>
+                        );
                       })}
                     </div>
+                    {useInfiniteList && ticketsForSelectedShop.length > 0 ? (
+                      <div
+                        ref={loadMoreSentinelRef}
+                        className="flex flex-col items-center justify-center gap-1.5 border-t border-slate-200/60 bg-white py-4 text-center"
+                        aria-live="polite"
+                      >
+                        {mobileHasMore ? (
+                          <>
+                            <Loader2 className="h-5 w-5 animate-spin text-[#F97316]" aria-hidden />
+                            <span className="text-[11px] text-slate-500">
+                              已加载 {pagedShopTickets.length} / {ticketsForSelectedShop.length} 条，继续上拉…
+                            </span>
+                          </>
+                        ) : (
+                          <span className="text-[11px] text-slate-400">
+                            已显示全部 {ticketsForSelectedShop.length} 条
+                          </span>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </div>
 
-              {ticketsForSelectedShop.length > 0 ? (
-                <div className="shrink-0 border-t border-slate-200/80 bg-white px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:px-2 md:pb-2">
-                  <div className="flex items-stretch gap-2 md:items-center md:justify-between">
-                    <button
-                      type="button"
-                      disabled={safeShopPage <= 0}
-                      onClick={() => setShopTicketsPage((p) => Math.max(0, p - 1))}
-                      className={cn(
-                        'inline-flex min-h-11 flex-1 items-center justify-center gap-1 rounded-xl border px-3 text-sm font-medium transition-colors active:scale-[0.99] md:min-h-0 md:flex-initial md:gap-0.5 md:rounded-lg md:px-2 md:py-1.5 md:text-[11px]',
-                        safeShopPage <= 0
-                          ? 'cursor-not-allowed border-slate-100 text-slate-300'
-                          : 'border-slate-200/90 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
-                      )}
-                    >
-                      <ChevronLeft className="h-4 w-4 md:h-3.5 md:w-3.5" />
-                      上一页
-                    </button>
-                    <span className="flex min-w-0 flex-[0.8] items-center justify-center tabular-nums text-xs text-slate-600 md:flex-initial md:text-[11px] md:text-slate-500">
-                      <span className="truncate text-center">
-                        {safeShopPage + 1} / {shopTotalPages}
-                        <span className="text-slate-300"> · </span>
-                        {ticketsForSelectedShop.length} 条
-                      </span>
+              {ticketsForSelectedShop.length > 0 && !useInfiniteList ? (
+                <div className="shrink-0 border-t border-slate-200/80 bg-white px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:px-3 md:pb-2">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between md:gap-3">
+                    <span className="shrink-0 text-xs text-slate-500 tabular-nums md:text-[11px]">
+                      共 {ticketsForSelectedShop.length} 条
                     </span>
-                    <button
-                      type="button"
-                      disabled={safeShopPage >= shopTotalPages - 1}
-                      onClick={() =>
-                        setShopTicketsPage((p) => Math.min(p + 1, Math.max(0, shopTotalPages - 1)))
-                      }
-                      className={cn(
-                        'inline-flex min-h-11 flex-1 items-center justify-center gap-1 rounded-xl border px-3 text-sm font-medium transition-colors active:scale-[0.99] md:min-h-0 md:flex-initial md:gap-0.5 md:rounded-lg md:px-2 md:py-1.5 md:text-[11px]',
-                        safeShopPage >= shopTotalPages - 1
-                          ? 'cursor-not-allowed border-slate-100 text-slate-300'
-                          : 'border-slate-200/90 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
-                      )}
-                    >
-                      下一页
-                      <ChevronRight className="h-4 w-4 md:h-3.5 md:w-3.5" />
-                    </button>
+                    <div className="flex items-center justify-center gap-0.5">
+                      <button
+                        type="button"
+                        disabled={safeShopPage <= 0}
+                        onClick={() => setShopTicketsPage(0)}
+                        className={cn(
+                          'hidden md:inline-flex h-7 w-7 items-center justify-center rounded-md border text-slate-600 transition-colors',
+                          safeShopPage <= 0
+                            ? 'cursor-not-allowed border-slate-100 text-slate-300'
+                            : 'border-slate-200 hover:bg-slate-50'
+                        )}
+                        title="首页"
+                      >
+                        <ChevronsLeft className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={safeShopPage <= 0}
+                        onClick={() => setShopTicketsPage((p) => Math.max(0, p - 1))}
+                        className={cn(
+                          'inline-flex h-8 min-w-8 items-center justify-center rounded-md border text-slate-600 transition-colors md:h-7 md:w-7',
+                          safeShopPage <= 0
+                            ? 'cursor-not-allowed border-slate-100 text-slate-300'
+                            : 'border-slate-200 hover:bg-slate-50'
+                        )}
+                        title="上一页"
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                      </button>
+                      {visiblePageIndices.map((pageIdx) => (
+                        <button
+                          key={pageIdx}
+                          type="button"
+                          onClick={() => setShopTicketsPage(pageIdx)}
+                          className={cn(
+                            'inline-flex h-8 min-w-8 items-center justify-center rounded-md border text-xs font-medium tabular-nums transition-colors md:h-7 md:min-w-7 md:text-[11px]',
+                            pageIdx === safeShopPage
+                              ? 'border-[#F97316] bg-[#F97316] text-white shadow-sm'
+                              : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                          )}
+                        >
+                          {pageIdx + 1}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        disabled={safeShopPage >= shopTotalPages - 1}
+                        onClick={() =>
+                          setShopTicketsPage((p) => Math.min(p + 1, Math.max(0, shopTotalPages - 1)))
+                        }
+                        className={cn(
+                          'inline-flex h-8 min-w-8 items-center justify-center rounded-md border text-slate-600 transition-colors md:h-7 md:w-7',
+                          safeShopPage >= shopTotalPages - 1
+                            ? 'cursor-not-allowed border-slate-100 text-slate-300'
+                            : 'border-slate-200 hover:bg-slate-50'
+                        )}
+                        title="下一页"
+                      >
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={safeShopPage >= shopTotalPages - 1}
+                        onClick={() => setShopTicketsPage(Math.max(0, shopTotalPages - 1))}
+                        className={cn(
+                          'hidden md:inline-flex h-7 w-7 items-center justify-center rounded-md border text-slate-600 transition-colors',
+                          safeShopPage >= shopTotalPages - 1
+                            ? 'cursor-not-allowed border-slate-100 text-slate-300'
+                            : 'border-slate-200 hover:bg-slate-50'
+                        )}
+                        title="末页"
+                      >
+                        <ChevronsRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <select
+                        value={shopPageSize}
+                        onChange={(e) => {
+                          setShopPageSize(Number(e.target.value));
+                          setShopTicketsPage(0);
+                        }}
+                        className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none focus:border-[#F97316]/50 focus:ring-1 focus:ring-[#F97316]/20 md:h-7 md:text-[11px]"
+                        aria-label="每页条数"
+                      >
+                        {INBOX_PAGE_SIZE_OPTIONS.map((n) => (
+                          <option key={n} value={n}>
+                            {n} 条/页
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
               ) : null}

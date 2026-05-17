@@ -25,7 +25,7 @@ import {
 } from './lib/syncWatermark.js';
 
 const app = express();
-const port = Number(process.env.PORT) || 4000;
+const port = Number(process.env.PORT) || 4001;
 
 if (resolveLlmBackend() === 'none') {
   console.warn(

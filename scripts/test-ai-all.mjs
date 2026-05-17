@@ -3,15 +3,15 @@
  * 全系统 AI 接口回归：顺序调用 7 个 POST /api/ai/* + GET /api/ai/audit。
  * 用法：
  *   npm run test:ai
- *   API_BASE=http://127.0.0.1:4000 node scripts/test-ai-all.mjs
- *   API_BASE=http://localhost:4001 npm run test:ai   # 经 Vite 代理
+ *   API_BASE=http://127.0.0.1:4001 node scripts/test-ai-all.mjs
+ *   API_BASE=http://localhost:4000 npm run test:ai   # 经 Vite（PC）代理
  * 严格模式（要求真实模型、本次请求无 *_fallback 审计项）：
  *   STRICT_AI=1 npm run test:ai
  *
  * 需后端已配置豆包/Gemini；请求头与 prisma seed 默认租户一致。
  */
 
-const BASE = (process.env.API_BASE || 'http://127.0.0.1:4000').replace(/\/$/, '');
+const BASE = (process.env.API_BASE || 'http://127.0.0.1:4001').replace(/\/$/, '');
 const TENANT = process.env.X_TENANT_ID || '11111111-1111-4111-8111-111111111111';
 const USER = process.env.X_USER_ID || '22222222-2222-4222-8222-222222222222';
 
@@ -185,7 +185,7 @@ async function main() {
 
   console.log('\n=== 阶段 A 全部通过 ===');
   console.log('\n阶段 B（浏览器自测清单）：');
-  console.log('  1) http://localhost:4001/ 工作台 — AI 效能洞察');
+  console.log('  1) http://localhost:4000/ 工作台 — AI 效能洞察');
   console.log('  2) 工单详情 — AI 智能生成 / AI 润色 / 自动翻译 / 意图刷新');
   console.log('  3) 提交售后 — AI 自动识别');
 }

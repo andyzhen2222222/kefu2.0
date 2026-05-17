@@ -382,6 +382,8 @@ export function TicketDetailStatusChips({
   renderTicketSummaryButton,
   /** 移动端等窄屏：仅保留 SLA 与订单状态，减少顶栏占用 */
   compact = false,
+  /** 合并到顶栏标题行等场景时覆盖默认外边距 */
+  className,
 }: {
   ticket: Ticket;
   order?: Order | null;
@@ -400,6 +402,8 @@ export function TicketDetailStatusChips({
   /** 是否展示工单摘要按钮（如果外部传入了） */
   renderTicketSummaryButton?: ReactNode;
   compact?: boolean;
+  /** 覆盖外层容器 class（如顶栏标题行内 `mt-0 gap-1`） */
+  className?: string;
 }) {
   const ord = orderPresentation(order);
   const sent = sentimentPresentation(ticket.sentiment);
@@ -514,7 +518,13 @@ export function TicketDetailStatusChips({
     : chips;
 
   return (
-    <div className={cn('flex flex-wrap items-center gap-2', compact ? 'mt-1.5' : 'mt-2')}>
+    <div
+      className={cn(
+        'flex flex-wrap items-center gap-2',
+        compact ? 'mt-1.5' : 'mt-2',
+        className
+      )}
+    >
       {chipsToRender.map((c) => {
         if (c.key === 'conv' && renderConversationAside && onMessageProcessingStatusChange) {
           return null;

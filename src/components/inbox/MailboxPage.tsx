@@ -1796,6 +1796,8 @@ export default function MailboxPage() {
             onInboxSynced={() => setListReloadNonce((n) => n + 1)}
             onTicketHover={live ? prefetchTicketDetail : undefined}
             className={isMobile ? "w-full border-none" : "w-[320px]"}
+            listPaginationMode={isMobile ? 'infinite' : 'auto'}
+            onTicketPatch={handleUpdateTicketById}
             {...(live
               ? {
                   listSearchQuery: inboxListSearchInput,

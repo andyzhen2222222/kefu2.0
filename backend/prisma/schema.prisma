@@ -287,6 +287,7 @@ model Ticket {
   sentiment                 String       @default("neutral")
   intent                    String       @default("")
   messageProcessingStatus   String       @default("unread")
+  unreadCount               Int          @default(0)
   subject                   String
   subjectOriginal           String?
   slaDueAt                  DateTime

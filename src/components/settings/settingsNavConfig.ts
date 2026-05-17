@@ -7,6 +7,7 @@ import {
   UserCog,
   Languages,
   BookOpen,
+  Sparkles,
 } from 'lucide-react';
 import type { User } from '@/src/types';
 
@@ -21,6 +22,7 @@ export interface SettingsNavItem {
 export const settingsNavItems: SettingsNavItem[] = [
   { icon: UserCog, label: '坐席与分配', path: '/settings/seats', adminOnly: true },
   { icon: Languages, label: '智能翻译', path: '/settings/translation' },
+  { icon: Sparkles, label: 'AI 润色', path: '/settings/ai-polish' },
   { icon: FileText, label: '模板管理', path: '/settings/templates' },
   { icon: BookOpen, label: '知识库', path: '/settings/knowledge' },
   { icon: Clock, label: 'SLA规则', path: '/settings/sla' },

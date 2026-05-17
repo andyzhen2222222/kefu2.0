@@ -23,6 +23,7 @@ import SeatsAndRolesPage from './components/settings/SeatsAndRolesPage';
 import RoutingRulesPage from './components/settings/RoutingRulesPage';
 import SettingsIndexRedirect from './components/settings/SettingsIndexRedirect';
 import TranslationSettingsPage from './components/settings/TranslationSettingsPage';
+import AiPolishSettingsPage from './components/settings/AiPolishSettingsPage';
 import KnowledgeBasePage from './components/settings/KnowledgeBasePage';
 import MotherSystemSyncPage from './components/settings/MotherSystemSyncPage';
 import AdminRoute from './components/auth/AdminRoute';
@@ -64,6 +65,7 @@ export default function App() {
             <Route index element={<SettingsIndexRedirect />} />
             <Route path="seats" element={<SeatsAndRolesPage />} />
             <Route path="translation" element={<TranslationSettingsPage />} />
+            <Route path="ai-polish" element={<AiPolishSettingsPage />} />
             <Route path="routing" element={<RoutingRulesPage />} />
             <Route path="templates" element={<TemplatesPage />} />
             <Route path="knowledge" element={<KnowledgeBasePage />} />

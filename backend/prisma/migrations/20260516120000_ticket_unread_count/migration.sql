@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Ticket" ADD COLUMN "unreadCount" INTEGER NOT NULL DEFAULT 0;

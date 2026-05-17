@@ -6,6 +6,13 @@ import { useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 import { useIsMobile } from '@/src/hooks/useIsMobile';
+import {
+  H5_MODAL_BTN_GHOST,
+  H5_SAFE_BOTTOM,
+  H5_TAB_BOTTOM_BAR,
+  H5_TAB_BTN_ACCENT,
+  H5_TAB_BTN_SECONDARY,
+} from '@/src/h5/h5UiSpec';
 
 /** 将整页长图按 A4 高度分页写入 PDF，避免单页超高导致 jsPDF 异常或内容丢失 */
 function canvasToMultiPagePdf(canvas: HTMLCanvasElement): jsPDF {
@@ -765,16 +772,26 @@ export default function InvoicePreviewModal({
         isMobile ? "w-full h-full rounded-none" : "w-full max-w-5xl max-h-[90vh] rounded-2xl"
       )}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-slate-200 shrink-0">
-        <h2 className="text-lg font-bold text-slate-900">发票预览 - 统一模版</h2>
+        <div
+          className={cn(
+            'flex shrink-0 items-center justify-between border-b border-slate-200 bg-white',
+            isMobile ? 'px-3 py-3' : 'px-6 py-4'
+          )}
+        >
+        <h2 className={cn('font-bold text-slate-900', isMobile ? 'text-sm' : 'text-lg')}>
+          发票预览 - 统一模版
+        </h2>
           <button
             type="button"
             onClick={onClose}
             title="关闭"
             aria-label="关闭"
-            className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+            className={cn(
+              'rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600',
+              isMobile ? 'p-1.5' : 'p-2'
+            )}
           >
-            <X className="w-5 h-5" />
+            <X className={isMobile ? 'h-5 w-5' : 'h-5 w-5'} />
           </button>
         </div>
 
@@ -786,35 +803,75 @@ export default function InvoicePreviewModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 bg-white border-t border-slate-200 shrink-0">
-          <button 
-            type="button"
-            onClick={onClose} 
-            disabled={isGenerating}
-            className="px-5 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100 rounded-xl transition-colors disabled:opacity-50"
-          >
-            取消
-          </button>
-          <button 
-            type="button"
-            onClick={() => void handleDownloadPDF()}
-            disabled={isGenerating}
-            className="flex items-center gap-2 px-5 py-2.5 bg-white border border-slate-200 text-slate-700 rounded-xl text-sm font-medium hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50"
-          >
-            {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-            {isGenerating ? '生成中...' : '下载 PDF'}
-          </button>
-          <button 
-            type="button"
-            onClick={handleSendToCustomer}
-            disabled={isGenerating || !onSendToCustomer}
-            title={!onSendToCustomer ? '未接入会话发送' : undefined}
-            className="flex items-center gap-2 px-5 py-2.5 bg-[#F97316] text-white rounded-xl text-sm font-medium hover:bg-[#ea580c] transition-colors shadow-sm disabled:opacity-50"
-          >
-            {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            {isGenerating ? '发送中...' : '发送给客户'}
-          </button>
-        </div>
+        {isMobile ? (
+          <div className={cn(H5_TAB_BOTTOM_BAR, H5_SAFE_BOTTOM, 'space-y-2 px-3 pt-2')}>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isGenerating}
+              className={H5_MODAL_BTN_GHOST}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleDownloadPDF()}
+              disabled={isGenerating}
+              className={H5_TAB_BTN_SECONDARY}
+            >
+              {isGenerating ? (
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 shrink-0" />
+              )}
+              {isGenerating ? '生成中…' : '下载 PDF'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSendToCustomer()}
+              disabled={isGenerating || !onSendToCustomer}
+              title={!onSendToCustomer ? '未接入会话发送' : undefined}
+              className={H5_TAB_BTN_ACCENT}
+            >
+              {isGenerating ? (
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4 shrink-0" />
+              )}
+              {isGenerating ? '发送中…' : '发送给客户'}
+            </button>
+          </div>
+        ) : (
+          <div className="flex shrink-0 items-center justify-end gap-3 border-t border-slate-200 bg-white px-6 py-4">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isGenerating}
+              className="rounded-xl px-5 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleDownloadPDF()}
+              disabled={isGenerating}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:opacity-50"
+            >
+              {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {isGenerating ? '生成中...' : '下载 PDF'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSendToCustomer()}
+              disabled={isGenerating || !onSendToCustomer}
+              title={!onSendToCustomer ? '未接入会话发送' : undefined}
+              className="flex items-center gap-2 rounded-xl bg-[#F97316] px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#ea580c] disabled:opacity-50"
+            >
+              {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {isGenerating ? '发送中...' : '发送给客户'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

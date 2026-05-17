@@ -52,6 +52,12 @@ import { Link } from 'react-router-dom';
 import OnlineSeatsModal from './OnlineSeatsModal';
 import { DEMO_AGENT_SEATS_INITIAL, DEMO_SEAT_ONLINE_BY_ID } from '@/src/data/demoAgentSeats';
 
+const INBOX_LIST_BASE = import.meta.env.VITE_APP_TYPE === 'h5' ? '/inbox' : '/mailbox';
+
+function inboxFilterLink(filter: string): string {
+  return `${INBOX_LIST_BASE}?filter=${filter}`;
+}
+
 /**
  * 与工单「消息处理 / SLA」口径对齐的仪表盘指标。
  * 环比徽章：产品定义为「较昨日同时段」——今日当前时刻的快照值 vs 昨日同一时刻快照值。
@@ -78,7 +84,7 @@ const INBOX_METRICS: {
     icon: MessageSquare,
     color: 'text-orange-600',
     bg: 'bg-orange-50',
-    link: '/mailbox?filter=unread',
+    link: inboxFilterLink('unread'),
   },
   {
     title: '已读未回复',
@@ -88,7 +94,7 @@ const INBOX_METRICS: {
     icon: Users,
     color: 'text-emerald-600',
     bg: 'bg-emerald-50',
-    link: '/mailbox?filter=unreplied',
+    link: inboxFilterLink('unreplied'),
   },
   {
     title: '已回复',
@@ -98,7 +104,7 @@ const INBOX_METRICS: {
     icon: CheckCircle2,
     color: 'text-blue-600',
     bg: 'bg-blue-50',
-    link: '/mailbox?filter=replied',
+    link: inboxFilterLink('replied'),
   },
   {
     title: '超时',
@@ -108,7 +114,7 @@ const INBOX_METRICS: {
     icon: AlertCircle,
     color: 'text-red-600',
     bg: 'bg-red-50',
-    link: '/mailbox?filter=sla_overdue',
+    link: inboxFilterLink('sla_overdue'),
   },
 ];
 
@@ -374,10 +380,10 @@ export default function DashboardPage() {
       };
     };
     return [
-      row('unread', '未读', MessageSquare, 'text-orange-600', 'bg-orange-50', '/mailbox?filter=unread'),
-      row('unreplied', '已读未回复', Users, 'text-emerald-600', 'bg-emerald-50', '/mailbox?filter=unreplied'),
-      row('replied', '已回复', CheckCircle2, 'text-blue-600', 'bg-blue-50', '/mailbox?filter=replied'),
-      row('slaOverdue', '超时', AlertCircle, 'text-red-600', 'bg-red-50', '/mailbox?filter=sla_overdue'),
+      row('unread', '未读', MessageSquare, 'text-orange-600', 'bg-orange-50', inboxFilterLink('unread')),
+      row('unreplied', '已读未回复', Users, 'text-emerald-600', 'bg-emerald-50', inboxFilterLink('unreplied')),
+      row('replied', '已回复', CheckCircle2, 'text-blue-600', 'bg-blue-50', inboxFilterLink('replied')),
+      row('slaOverdue', '超时', AlertCircle, 'text-red-600', 'bg-red-50', inboxFilterLink('sla_overdue')),
     ];
   }, [liveDash, apiMetrics]);
 

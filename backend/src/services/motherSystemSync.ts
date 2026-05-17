@@ -802,9 +802,16 @@ export async function syncOrdersFromMotherSystem(
   return totalSynced;
 }
 
-function inferMessageProcessingStatusFromConv(conv: Record<string, unknown>): string {
+function parseUnreadCountFromConv(conv: Record<string, unknown>): number {
   const unread = conv.unreadCount ?? conv.buyerUnreadCount ?? conv.unreadMessageCount;
-  if (typeof unread === 'number' && unread > 0) return 'unread';
+  if (typeof unread === 'number' && Number.isFinite(unread) && unread > 0) {
+    return Math.min(9999, Math.floor(unread));
+  }
+  return 0;
+}
+
+function inferMessageProcessingStatusFromConv(conv: Record<string, unknown>): string {
+  if (parseUnreadCountFromConv(conv) > 0) return 'unread';
   const lur = conv.lastUnrepliedMessageAt;
   if (lur != null && lur !== '') return 'unreplied';
   const sender = String(conv.lastMessageSender ?? '').toUpperCase();
@@ -1095,6 +1102,7 @@ export async function syncConversationsFromMotherSystem(tenantId: string, token:
         const motherIntent = pickIntentFromConversation(convRec);
         const motherSentiment = pickSentimentFromConversation(convRec);
         const procStatus = inferMessageProcessingStatusFromConv(convRec);
+        const unreadCount = parseUnreadCountFromConv(convRec);
 
         if (existingTicket) {
           let assignPatch: { assignedSeatId?: string } = {};
@@ -1115,6 +1123,7 @@ export async function syncConversationsFromMotherSystem(tenantId: string, token:
               subject: subj,
               subjectOriginal: draftSubjectTrim ? subj : existingTicket.subjectOriginal,
               messageProcessingStatus: procStatus,
+              unreadCount,
               ...(motherIntent ? { intent: motherIntent } : {}),
               ...(motherSentiment ? { sentiment: motherSentiment } : {}),
               ...assignPatch,
@@ -1138,6 +1147,7 @@ export async function syncConversationsFromMotherSystem(tenantId: string, token:
               subject: subj,
               subjectOriginal: draftSubjectTrim ? subj : null,
               messageProcessingStatus: procStatus,
+              unreadCount,
               slaDueAt: await computeSlaDueAtForTicket(tenantId, channel, updatedAt),
               createdAt: conv.originalCreateAt
                 ? new Date(String(conv.originalCreateAt))
