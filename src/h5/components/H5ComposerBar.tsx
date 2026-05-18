@@ -9,7 +9,19 @@ import {
   FileText,
   Users,
   X,
+  Mail,
+  MailOpen,
+  CheckCircle2,
+  MessageCircle,
 } from 'lucide-react';
+import type { Ticket } from '@/src/types';
+import {
+  buildToggleReadPatch,
+  buildToggleRepliedPatch,
+  isTicketUnreadForList,
+  readToggleLabel,
+  repliedToggleLabel,
+} from '@/src/lib/ticketProcessingPatches';
 import { cn } from '@/src/lib/utils';
 import ToggleSwitch from '@/src/components/ui/ToggleSwitch';
 import {
@@ -51,7 +63,14 @@ export type H5ComposerBarProps = {
   onTranslateDraft?: () => void;
   translateDisabled?: boolean;
   translateLoading?: boolean;
+  /** 批量翻译当前会话全部待译消息 */
+  onTranslateAllPage?: () => void;
+  translateAllPageLoading?: boolean;
+  translateAllPageDisabled?: boolean;
   onPickFiles?: (files: FileList) => void;
+  /** 工单会话状态快捷切换（与收件箱左滑一致） */
+  ticket?: Pick<Ticket, 'messageProcessingStatus' | 'status'>;
+  onTicketPatch?: (patch: Partial<Ticket>) => void;
 };
 
 type MoreItem = {
@@ -98,7 +117,12 @@ export default function H5ComposerBar({
   onTranslateDraft,
   translateDisabled,
   translateLoading,
+  onTranslateAllPage,
+  translateAllPageLoading = false,
+  translateAllPageDisabled = false,
   onPickFiles,
+  ticket,
+  onTicketPatch,
   isInternalNote = false,
   onExitInternalNote,
   focusTrigger = 0,
@@ -181,6 +205,22 @@ export default function H5ComposerBar({
           } as MoreItem,
         ]
       : []),
+    ...(onTranslateAllPage
+      ? [
+          {
+            key: 'translate-all',
+            label: '全页翻译',
+            sub: '会话消息',
+            icon: translateAllPageLoading ? (
+              <Loader2 className="h-6 w-6 animate-spin text-[#F97316]" />
+            ) : (
+              <Languages className="h-6 w-6 text-[#F97316]" />
+            ),
+            disabled: translateAllPageDisabled || translateAllPageLoading,
+            onClick: wrapAction(onTranslateAllPage),
+          } as MoreItem,
+        ]
+      : []),
     {
       key: 'ai',
       label: '智能回复',
@@ -200,6 +240,34 @@ export default function H5ComposerBar({
       icon: <FileText className="h-6 w-6 text-slate-600" />,
       onClick: wrapAction(onOpenTemplate),
     },
+    ...(ticket && onTicketPatch
+      ? [
+          {
+            key: 'read',
+            label: readToggleLabel(ticket),
+            sub: isTicketUnreadForList(ticket) ? '当前未读' : '当前已读',
+            icon: isTicketUnreadForList(ticket) ? (
+              <MailOpen className="h-6 w-6 text-amber-600" />
+            ) : (
+              <Mail className="h-6 w-6 text-amber-600" />
+            ),
+            onClick: wrapAction(() => onTicketPatch(buildToggleReadPatch(ticket))),
+          } as MoreItem,
+          {
+            key: 'reply',
+            label: repliedToggleLabel(ticket),
+            sub:
+              ticket.messageProcessingStatus === 'replied' ? '已回复' : '待回复',
+            icon:
+              ticket.messageProcessingStatus === 'replied' ? (
+                <MessageCircle className="h-6 w-6 text-orange-600" />
+              ) : (
+                <CheckCircle2 className="h-6 w-6 text-orange-600" />
+              ),
+            onClick: wrapAction(() => onTicketPatch(buildToggleRepliedPatch(ticket))),
+          } as MoreItem,
+        ]
+      : []),
     {
       key: 'file',
       label: '添加文件',

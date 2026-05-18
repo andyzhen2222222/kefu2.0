@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { 
   Send, 
   Paperclip, 
@@ -271,6 +271,7 @@ export default function H5TicketDetail({
   const [showTemplatePopover, setShowTemplatePopover] = useState(false);
   const [showAiPolishPopover, setShowAiPolishPopover] = useState(false);
   const [isTranslatingDraft, setIsTranslatingDraft] = useState(false);
+  const [isTranslatingAllPage, setIsTranslatingAllPage] = useState(false);
   const [composerNotice, setComposerNotice] = useState<H5ComposerNotice | null>(null);
   const composerNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const templatePopoverRef = useRef<HTMLDivElement>(null);
@@ -580,6 +581,23 @@ export default function H5TicketDetail({
     localStorage.setItem('intellidesk_auto_insight', enabled ? '1' : '0');
   };
 
+  const messageNeedsInboundTranslation = useCallback(
+    (m: Message, opts?: { retryFailed?: boolean }) => {
+      if (m.isInternal || !m.content?.trim()) return false;
+      if (aiTranslations[m.id] || aiTranslateInflightRef.current.has(m.id)) return false;
+      if (!opts?.retryFailed && aiTranslateFailed[m.id]) return false;
+
+      const isRtl = m.senderType === 'agent' || m.senderType === 'ai';
+      if (isRtl) {
+        if (m.sentPlatformText?.trim()) return false;
+        if (/[\u4e00-\u9fa5]/.test(m.content)) return false;
+        return true;
+      }
+      return !m.translatedContent?.trim();
+    },
+    [aiTranslations, aiTranslateFailed]
+  );
+
   /** 
    * 对消息列表执行批量翻译。
    */
@@ -654,19 +672,7 @@ export default function H5TicketDetail({
   useEffect(() => {
     if (!intellideskConfigured() || !translationSettings.inboundTranslateEnabled) return;
 
-    const need = messages.filter((m) => {
-      if (m.isInternal || !m.content?.trim()) return false;
-      if (aiTranslations[m.id] || aiTranslateFailed[m.id] || aiTranslateInflightRef.current.has(m.id)) return false;
-
-      const isRtl = m.senderType === 'agent' || m.senderType === 'ai';
-      if (isRtl) {
-        if (m.sentPlatformText?.trim()) return false;
-        if (/[\u4e00-\u9fa5]/.test(m.content)) return false;
-        return true;
-      } else {
-        return !m.translatedContent?.trim();
-      }
-    });
+    const need = messages.filter((m) => messageNeedsInboundTranslation(m));
 
     if (need.length > 0) {
       void handleBatchTranslateMessages(need);
@@ -679,6 +685,7 @@ export default function H5TicketDetail({
     user?.id,
     aiTranslations,
     aiTranslateFailed,
+    messageNeedsInboundTranslation,
   ]);
 
   useEffect(() => {
@@ -944,6 +951,50 @@ export default function H5TicketDetail({
         await new Promise<void>((r) => setTimeout(r, 320 - elapsed));
       }
       setIsTranslatingDraft(false);
+    }
+  };
+
+  const handleTranslateAllPage = async () => {
+    if (isTranslatingAllPage) return;
+    if (!intellideskConfigured()) {
+      showComposerNotice({ type: 'error', message: '未连接服务，无法翻译' }, 5000);
+      return;
+    }
+    if (!translationSettings.inboundTranslateEnabled) {
+      showComposerNotice({
+        type: 'info',
+        message: '请先在「设置 → 翻译」中开启接收消息自动翻译',
+      });
+      return;
+    }
+
+    const need = messages.filter((m) => messageNeedsInboundTranslation(m, { retryFailed: true }));
+    if (need.length === 0) {
+      showComposerNotice({ type: 'info', message: '当前会话消息均已翻译' });
+      return;
+    }
+
+    setIsTranslatingAllPage(true);
+    dismissComposerNotice();
+    const startedAt = Date.now();
+    try {
+      await handleBatchTranslateMessages(need);
+      showComposerNotice({
+        type: 'success',
+        message: `已翻译 ${need.length} 条会话消息`,
+      });
+    } catch (e) {
+      console.error('Translate all page:', e);
+      showComposerNotice(
+        { type: 'error', message: formatAiUserVisibleError(e) },
+        6000
+      );
+    } finally {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < 320) {
+        await new Promise<void>((r) => setTimeout(r, 320 - elapsed));
+      }
+      setIsTranslatingAllPage(false);
     }
   };
 
@@ -2438,9 +2489,16 @@ export default function H5TicketDetail({
           onTranslateDraft={() => void handleTranslateDraft()}
           translateDisabled={isTranslatingDraft}
           translateLoading={isTranslatingDraft}
+          onTranslateAllPage={() => void handleTranslateAllPage()}
+          translateAllPageLoading={isTranslatingAllPage}
+          translateAllPageDisabled={
+            !intellideskConfigured() || !translationSettings.inboundTranslateEnabled
+          }
           composerNotice={composerNotice}
           onDismissComposerNotice={dismissComposerNotice}
           onPickFiles={handleComposerPickFiles}
+          ticket={ticket}
+          onTicketPatch={onUpdateTicket}
         />
 
         {showTemplatePopover ? (

@@ -31,6 +31,13 @@ import { resolveTicketUnreadBadgeCount } from '@/src/lib/unreadBadge';
 import InboxFilterDropdown, { type InboxFilterOption } from '@/src/components/inbox/InboxFilterDropdown';
 import InboxListSwipeRow, { type InboxRowAction } from '@/src/components/inbox/InboxListSwipeRow';
 import { loadInboxPinnedIds, toggleInboxPinned } from '@/src/lib/inboxPinnedStore';
+import {
+  buildToggleReadPatch,
+  buildToggleRepliedPatch,
+  isTicketUnreadForList,
+  readToggleLabel,
+  repliedToggleLabel,
+} from '@/src/lib/ticketProcessingPatches';
 import { useAuth } from '@/src/hooks/useAuth';
 import { useIsMobile } from '@/src/hooks/useIsMobile';
 import {
@@ -118,7 +125,7 @@ function isTicketSlaTrackable(t: Ticket): boolean {
 }
 
 function isTicketUnread(t: Ticket): boolean {
-  return t.messageProcessingStatus === 'unread' || t.status === TicketStatus.NEW;
+  return isTicketUnreadForList(t);
 }
 
 function buildInboxSwipeActions(
@@ -127,9 +134,6 @@ function buildInboxSwipeActions(
   onPin: () => void,
   onPatch: (patch: Partial<Ticket>) => void
 ): InboxRowAction[] {
-  const unread = isTicketUnread(ticket);
-  const replied = ticket.messageProcessingStatus === 'replied';
-
   return [
     {
       key: 'pin',
@@ -139,28 +143,15 @@ function buildInboxSwipeActions(
     },
     {
       key: 'read',
-      label: unread ? '标为已读' : '标为未读',
+      label: readToggleLabel(ticket).replace('标记', '标为'),
       className: 'bg-amber-500',
-      onClick: () => {
-        if (unread) {
-          const patch: Partial<Ticket> = {
-            messageProcessingStatus: 'unreplied',
-            unreadCount: 0,
-          };
-          if (ticket.status === TicketStatus.NEW) patch.status = TicketStatus.TODO;
-          onPatch(patch);
-        } else {
-          onPatch({ messageProcessingStatus: 'unread', unreadCount: 1 });
-        }
-      },
+      onClick: () => onPatch(buildToggleReadPatch(ticket)),
     },
     {
       key: 'reply',
-      label: replied ? '标为未回复' : '标为已回复',
+      label: repliedToggleLabel(ticket).replace('标记', '标为'),
       className: 'bg-orange-500',
-      onClick: () => {
-        onPatch({ messageProcessingStatus: replied ? 'unreplied' : 'replied' });
-      },
+      onClick: () => onPatch(buildToggleRepliedPatch(ticket)),
     },
   ];
 }
@@ -714,30 +705,6 @@ export default function InboxList({
     )}>
       {/* Header & Search */}
       <div className="p-4 border-b border-slate-200/90 space-y-2.5">
-        {useInfiniteList && mobileSearchOpen ? (
-          <div className="relative animate-in fade-in slide-in-from-top-1 duration-200">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-            <input
-              ref={searchInputRef}
-              type="search"
-              enterKeyHint="search"
-              placeholder="搜索平台订单号、主题、买家…"
-              className="w-full pl-9 pr-9 py-2 bg-slate-50/90 border border-slate-200/90 focus:bg-white focus:border-slate-300 focus:ring-1 focus:ring-slate-200 rounded-lg text-[13px] text-slate-700 placeholder:text-slate-400 transition-all outline-none"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-            <button
-              type="button"
-              title="关闭搜索"
-              aria-label="关闭搜索"
-              onClick={() => setMobileSearchOpen(false)}
-              className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 active:bg-slate-100"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        ) : null}
-
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-slate-800 tracking-tight shrink-0">工单</h2>
           <div className="flex items-center gap-1 shrink-0">
@@ -944,6 +911,29 @@ export default function InboxList({
         ) : (
           <div className="flex flex-col flex-1 min-h-0">
             <div className="shrink-0 border-b border-slate-200/80 bg-white px-3 py-2">
+              {useInfiniteList && mobileSearchOpen ? (
+                <div className="relative mb-2 animate-in fade-in slide-in-from-top-1 duration-200">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                  <input
+                    ref={searchInputRef}
+                    type="search"
+                    enterKeyHint="search"
+                    placeholder="搜索平台订单号、主题、买家…"
+                    className="w-full pl-9 pr-9 py-2 bg-slate-50/90 border border-slate-200/90 focus:bg-white focus:border-slate-300 focus:ring-1 focus:ring-slate-200 rounded-lg text-[13px] text-slate-700 placeholder:text-slate-400 transition-all outline-none"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    title="关闭搜索"
+                    aria-label="关闭搜索"
+                    onClick={() => setMobileSearchOpen(false)}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 active:bg-slate-100"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : null}
               {useInfiniteList ? (
                 <div className="flex items-center gap-2 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   <InboxFilterDropdown
